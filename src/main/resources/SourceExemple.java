@@ -10,4 +10,9 @@ public class SourceExemple{
     public boolean isEven(int num){
         return num % 2 == 0;
     }
+    
+    public int threeSquared(){
+        return this.getSquare(3);
+    }
+    
 }
