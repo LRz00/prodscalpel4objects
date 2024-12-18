@@ -1,10 +1,14 @@
 public class SourceExemple{
+    int number = 3;
+    
     public String getWelcomMessage(){
         return "BEM-VINDO";
     }
     
     public int getSquare(int num){
-        return num * num;
+        getWelcomMessage();
+        return num * number;
+        
     }
     
     public boolean isEven(int num){

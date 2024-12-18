@@ -1,25 +1,22 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.ifba.prodscalpel4objects.extractor;
 
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.NameExpr;
+
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 /**
+ * Classe responsável por extrair um método e suas dependências para um novo arquivo.
  *
  * @author lara
  */
@@ -28,17 +25,16 @@ public class MethodExtractorV1 {
     public MethodExtractorV1() {
     }
 
-    //Metodo principal para extração
+    // Método principal para extração
     public void extract() {
         try {
-
-            //Caminho para o arquivo fonte(eventualmente evoluir para receber como parametro)
+            // Caminho para o arquivo fonte
             String path = "src/main/resources/SourceExemple.java";
 
-            //Nom do metodo a ser extraido(eventualmente evoluir para receber como parametro)
+            // Nome do método a ser extraído
             String methodToBeExtracted = "threeSquared";
 
-            //Cria uma instancia do javaparser para analisar o codigo
+            // Cria uma instância do JavaParser para analisar o código
             JavaParser javaParser = new JavaParser();
             File source = new File(path);
 
@@ -68,67 +64,122 @@ public class MethodExtractorV1 {
                 return;
             }
 
-            // Obtém todos os métodos dependentes do método a ser extraído
-            Set<MethodDeclaration> dependentMethods = findDependentMethods(method, sourceClass);
+            // Obtém todos os métodos dependentes (em cadeia)
+            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass);
 
-            // Arquivo de destino onde o método será transferido
-            File targetFile = new File("IceBox.java");
+            // Obtém todos os atributos necessários pelos métodos (principal e dependentes)
+            Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
 
-            // Cria o arquivo de destino caso ele não exista
-            if (!targetFile.exists()) {
-                targetFile.createNewFile();
-                Files.write(Paths.get("IceBox.java"), "public class IceBox {}\n".getBytes());
+            // Diretório de destino
+            Path targetDirectory = Paths.get("IceBox");
+            if (!Files.exists(targetDirectory)) {
+                Files.createDirectory(targetDirectory);
             }
+
+            // Nome do arquivo de destino será o mesmo do arquivo original
+            String originalFileName = source.getName();
+            File targetFile = targetDirectory.resolve(originalFileName).toFile();
+
+            // Cria ou substitui o arquivo de destino
+            if (targetFile.exists()) {
+                Files.delete(targetFile.toPath());
+            }
+            targetFile.createNewFile();
 
             // Faz o parse do arquivo de destino
             ParseResult<CompilationUnit> targetParseResult = javaParser.parse(targetFile);
 
             // Obtém ou cria a classe no arquivo de destino
-            CompilationUnit targetCU = targetParseResult.getResult().get();
+            CompilationUnit targetCU = targetParseResult.getResult().orElse(new CompilationUnit());
             ClassOrInterfaceDeclaration targetClass = targetCU.findFirst(ClassOrInterfaceDeclaration.class)
-                    .orElseGet(() -> targetCU.addClass("IceBox"));
+                    .orElseGet(() -> targetCU.addClass(originalFileName.replace(".java", "")));
 
             // Adiciona o método principal ao arquivo de destino
             targetClass.addMember(method.clone());
 
-            // Adiciona os métodos dependentes ao arquivo de destino, evitando "clones"
+            // Adiciona os métodos dependentes ao arquivo de destino, evitando duplicações
             for (MethodDeclaration depMethod : dependentMethods) {
-                if (!targetClass.getMethodsByName(depMethod.getNameAsString()).isEmpty()) {
-                    continue; // Ignora métodos já adicionados
+                if (targetClass.getMethodsByName(depMethod.getNameAsString()).isEmpty()) {
+                    targetClass.addMember(depMethod.clone());
                 }
-                targetClass.addMember(depMethod.clone());
             }
 
+            // Adiciona os atributos necessários ao arquivo de destino, evitando duplicações
+            for (FieldDeclaration field : requiredFields) {
+                if (targetClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
+                    targetClass.addMember(field.clone());
+                }
+            }
+
+            // debugando
+            //System.out.println("Conteúdo gerado para o arquivo de destino:");
+            //System.out.println(targetCU.toString());
+
             // Escreve o conteúdo atualizado no arquivo de destino
-            Files.write(Paths.get("IceBox.java"), targetCU.toString().getBytes());
+            Files.write(targetFile.toPath(), targetCU.toString().getBytes());
 
         } catch (Exception e) {
+            e.printStackTrace();
         }
-
     }
 
     /**
-     * Encontra todos os métodos dependentes chamados dentro de um método.
-     * recebe o método principal a ser analisada, a classe onde o método está
-     * definido e retorna um set de métodos dependentes.
+     * Encontra todos os métodos dependentes (em cadeia) chamados dentro de um método.
      */
-    private Set<MethodDeclaration> findDependentMethods(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass) {
+    private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass) {
+        Set<MethodDeclaration> allDependentMethods = new HashSet<>();
+        Set<MethodDeclaration> processedMethods = new HashSet<>();
+        Set<MethodDeclaration> methodsToProcess = new HashSet<>();
+        methodsToProcess.add(method);
 
-        // Conjunto para armazenar os métodos dependentes
-        Set<MethodDeclaration> dependentMethods = new HashSet<>();
+        while (!methodsToProcess.isEmpty()) {
+            MethodDeclaration currentMethod = methodsToProcess.iterator().next();
+            methodsToProcess.remove(currentMethod);
 
-        // Busca todas as chamadas de métodos dentro do método principal
-        List<MethodCallExpr> methodCalls = method.findAll(MethodCallExpr.class);
+            if (processedMethods.contains(currentMethod)) {
+                continue;
+            }
+            processedMethods.add(currentMethod);
 
-        // Para cada chamada de método, verifica se o método existe na classe fonte
-        for (MethodCallExpr call : methodCalls) {
-            String calledMethodName = call.getNameAsString(); // Nome do método chamado
+            List<MethodCallExpr> methodCalls = currentMethod.findAll(MethodCallExpr.class);
 
-            // Procura o método chamado na classe fonte e adiciona ao conjunto de dependências
-            sourceClass.findFirst(MethodDeclaration.class, m -> m.getNameAsString().equals(calledMethodName))
-                    .ifPresent(dependentMethods::add);
+            for (MethodCallExpr call : methodCalls) {
+                String calledMethodName = call.getNameAsString();
+                Optional<MethodDeclaration> dependentMethodOpt = sourceClass.findFirst(MethodDeclaration.class,
+                        m -> m.getNameAsString().equals(calledMethodName));
+
+                if (dependentMethodOpt.isPresent()) {
+                    MethodDeclaration dependentMethod = dependentMethodOpt.get();
+                    allDependentMethods.add(dependentMethod);
+                    methodsToProcess.add(dependentMethod);
+                }
+            }
         }
 
-        return dependentMethods;
+        return allDependentMethods;
+    }
+
+    /**
+     * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
+     */
+    private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
+                                                     ClassOrInterfaceDeclaration sourceClass) {
+        Set<FieldDeclaration> requiredFields = new HashSet<>();
+
+        // Coleta todos os campos diretamente usados pelos métodos
+        List<MethodDeclaration> allMethods = new ArrayList<>(dependentMethods);
+        allMethods.add(mainMethod);
+
+        for (MethodDeclaration method : allMethods) {
+            method.findAll(NameExpr.class).forEach(nameExpr -> {
+                String fieldName = nameExpr.getNameAsString();
+                sourceClass.getFields().stream()
+                        .filter(field -> field.getVariables().stream()
+                                .anyMatch(variable -> variable.getNameAsString().equals(fieldName)))
+                        .forEach(requiredFields::add);
+            });
+        }
+
+        return requiredFields;
     }
 }
