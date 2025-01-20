@@ -16,7 +16,7 @@ import java.nio.file.Paths;
 import java.util.*;
 
 /**
- * Classe responsável por extrair um método e suas dependências para um novo arquivo.
+ * Classe responsável por extrair um método e suas dependências para novos arquivos.
  *
  * @author lara
  */
@@ -25,50 +25,11 @@ public class MethodExtractorV1 {
     public MethodExtractorV1() {
     }
 
-    // Método principal para extração
     public void extract() {
         try {
-            // Caminho para o arquivo fonte
-            String path = "src/main/resources/SourceExemple.java";
-
-            // Nome do método a ser extraído
-            String methodToBeExtracted = "threeSquared";
-
-            // Cria uma instância do JavaParser para analisar o código
-            JavaParser javaParser = new JavaParser();
-            File source = new File(path);
-
-            // Faz o parse do arquivo fonte
-            ParseResult<CompilationUnit> sourceParseResult = javaParser.parse(source);
-
-            // Encontra a classe principal no arquivo fonte
-            Optional<ClassOrInterfaceDeclaration> sourceClassOpt = sourceParseResult.getResult()
-                    .flatMap(cu -> cu.findFirst(ClassOrInterfaceDeclaration.class));
-
-            // Verifica se a classe foi encontrada
-            if (!sourceClassOpt.isPresent()) {
-                System.out.println("Classe fonte não encontrada.");
-                return;
-            }
-
-            // Obtém a classe encontrada
-            ClassOrInterfaceDeclaration sourceClass = sourceClassOpt.get();
-
-            // Encontra o método a ser extraído dentro da classe fonte
-            MethodDeclaration method = sourceClass.findFirst(MethodDeclaration.class,
-                    m -> m.getNameAsString().equals(methodToBeExtracted)).orElse(null);
-
-            // Verifica se o método foi encontrado
-            if (method == null) {
-                System.out.println("Método não encontrado: " + methodToBeExtracted);
-                return;
-            }
-
-            // Obtém todos os métodos dependentes (em cadeia)
-            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass);
-
-            // Obtém todos os atributos necessários pelos métodos (principal e dependentes)
-            Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
+            // Caminho do diretório fonte
+            String sourceDirPath = "/home/lara/Documentos/TCC-EXAMPLE/src/com/example/service/";
+            String methodToBeExtracted = "processDataWithExtraLogic";
 
             // Diretório de destino
             Path targetDirectory = Paths.get("IceBox");
@@ -76,104 +37,126 @@ public class MethodExtractorV1 {
                 Files.createDirectory(targetDirectory);
             }
 
-            // Nome do arquivo de destino será o mesmo do arquivo original
-            String originalFileName = source.getName();
-            File targetFile = targetDirectory.resolve(originalFileName).toFile();
+            // Inicializa o JavaParser
+            JavaParser javaParser = new JavaParser();
 
-            // Cria ou substitui o arquivo de destino
-            if (targetFile.exists()) {
-                Files.delete(targetFile.toPath());
+            // Analisa todos os arquivos no diretório fonte
+            Map<String, CompilationUnit> sourceFiles = new HashMap<>();
+            Files.walk(Paths.get(sourceDirPath))
+                    .filter(path -> path.toString().endsWith(".java"))
+                    .forEach(path -> {
+                        try {
+                            ParseResult<CompilationUnit> parseResult = javaParser.parse(path.toFile());
+                            parseResult.getResult().ifPresent(cu -> sourceFiles.put(path.getFileName().toString(), cu));
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    });
+
+            // Busca o método principal em todas as classes
+            Optional<MethodDeclaration> mainMethodOpt = sourceFiles.values().stream()
+                    .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
+                    .flatMap(cls -> cls.findAll(MethodDeclaration.class).stream())
+                    .filter(method -> method.getNameAsString().equals(methodToBeExtracted))
+                    .findFirst();
+
+            if (!mainMethodOpt.isPresent()) {
+                System.out.println("Método principal não encontrado: " + methodToBeExtracted);
+                return;
             }
-            targetFile.createNewFile();
 
-            // Faz o parse do arquivo de destino
-            ParseResult<CompilationUnit> targetParseResult = javaParser.parse(targetFile);
+            MethodDeclaration mainMethod = mainMethodOpt.get();
+            ClassOrInterfaceDeclaration mainClass = (ClassOrInterfaceDeclaration) mainMethod.getParentNode().get();
 
-            // Obtém ou cria a classe no arquivo de destino
-            CompilationUnit targetCU = targetParseResult.getResult().orElse(new CompilationUnit());
-            ClassOrInterfaceDeclaration targetClass = targetCU.findFirst(ClassOrInterfaceDeclaration.class)
-                    .orElseGet(() -> targetCU.addClass(originalFileName.replace(".java", "")));
+            // Encontra dependências
+            Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> dependentMethods = findAllDependentMethods(mainMethod, mainClass, sourceFiles);
+            Set<FieldDeclaration> requiredFields = findRequiredFields(mainMethod, dependentMethods, sourceFiles);
 
-            // Adiciona o método principal ao arquivo de destino
-            targetClass.addMember(method.clone());
+            // Escreve métodos e dependências em arquivos separados
+            for (Map.Entry<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> entry : dependentMethods.entrySet()) {
+                ClassOrInterfaceDeclaration sourceClass = entry.getKey();
+                Set<MethodDeclaration> methods = entry.getValue();
 
-            // Adiciona os métodos dependentes ao arquivo de destino, evitando duplicações
-            for (MethodDeclaration depMethod : dependentMethods) {
-                if (targetClass.getMethodsByName(depMethod.getNameAsString()).isEmpty()) {
-                    targetClass.addMember(depMethod.clone());
+                // Nome do arquivo de destino
+                String targetFileName = sourceClass.getNameAsString() + ".java";
+                File targetFile = targetDirectory.resolve(targetFileName).toFile();
+
+                CompilationUnit targetCU = new CompilationUnit();
+                ClassOrInterfaceDeclaration targetClass = targetCU.addClass(sourceClass.getNameAsString());
+
+                // Adiciona métodos
+                for (MethodDeclaration method : methods) {
+                    targetClass.addMember(method.clone());
                 }
-            }
 
-            // Adiciona os atributos necessários ao arquivo de destino, evitando duplicações
-            for (FieldDeclaration field : requiredFields) {
-                if (targetClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
-                    targetClass.addMember(field.clone());
+                // Adiciona campos se for a classe principal
+                if (sourceClass.equals(mainClass)) {
+                    for (FieldDeclaration field : requiredFields) {
+                        if (targetClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
+                            targetClass.addMember(field.clone());
+                        }
+                    }
                 }
+
+                // Escreve o arquivo
+                Files.write(targetFile.toPath(), targetCU.toString().getBytes());
             }
-
-            // debugando
-            //System.out.println("Conteúdo gerado para o arquivo de destino:");
-            //System.out.println(targetCU.toString());
-
-            // Escreve o conteúdo atualizado no arquivo de destino
-            Files.write(targetFile.toPath(), targetCU.toString().getBytes());
 
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * Encontra todos os métodos dependentes (em cadeia) chamados dentro de um método.
-     */
-    private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass) {
-        Set<MethodDeclaration> allDependentMethods = new HashSet<>();
-        Set<MethodDeclaration> processedMethods = new HashSet<>();
-        Set<MethodDeclaration> methodsToProcess = new HashSet<>();
-        methodsToProcess.add(method);
+    private Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> findAllDependentMethods(
+            MethodDeclaration method,
+            ClassOrInterfaceDeclaration mainClass,
+            Map<String, CompilationUnit> sourceFiles) {
 
-        while (!methodsToProcess.isEmpty()) {
-            MethodDeclaration currentMethod = methodsToProcess.iterator().next();
-            methodsToProcess.remove(currentMethod);
+        Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> result = new HashMap<>();
+        Queue<MethodDeclaration> queue = new LinkedList<>();
+        queue.add(method);
 
-            if (processedMethods.contains(currentMethod)) {
-                continue;
+        while (!queue.isEmpty()) {
+            MethodDeclaration currentMethod = queue.poll();
+            ClassOrInterfaceDeclaration currentClass = (ClassOrInterfaceDeclaration) currentMethod.getParentNode().get();
+
+            result.putIfAbsent(currentClass, new HashSet<>());
+            if (!result.get(currentClass).add(currentMethod)) {
+                continue; // Método já processado
             }
-            processedMethods.add(currentMethod);
 
+            // Encontra chamadas de método
             List<MethodCallExpr> methodCalls = currentMethod.findAll(MethodCallExpr.class);
-
             for (MethodCallExpr call : methodCalls) {
                 String calledMethodName = call.getNameAsString();
-                Optional<MethodDeclaration> dependentMethodOpt = sourceClass.findFirst(MethodDeclaration.class,
-                        m -> m.getNameAsString().equals(calledMethodName));
 
-                if (dependentMethodOpt.isPresent()) {
-                    MethodDeclaration dependentMethod = dependentMethodOpt.get();
-                    allDependentMethods.add(dependentMethod);
-                    methodsToProcess.add(dependentMethod);
-                }
+                // Procura o método na classe atual ou em outras classes
+                sourceFiles.values().stream()
+                        .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
+                        .flatMap(cls -> cls.findAll(MethodDeclaration.class).stream())
+                        .filter(m -> m.getNameAsString().equals(calledMethodName))
+                        .forEach(queue::add);
             }
         }
 
-        return allDependentMethods;
+        return result;
     }
 
-    /**
-     * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
-     */
-    private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
-                                                     ClassOrInterfaceDeclaration sourceClass) {
-        Set<FieldDeclaration> requiredFields = new HashSet<>();
+    private Set<FieldDeclaration> findRequiredFields(
+            MethodDeclaration mainMethod,
+            Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> dependentMethods,
+            Map<String, CompilationUnit> sourceFiles) {
 
-        // Coleta todos os campos diretamente usados pelos métodos
-        List<MethodDeclaration> allMethods = new ArrayList<>(dependentMethods);
+        Set<FieldDeclaration> requiredFields = new HashSet<>();
+        Set<MethodDeclaration> allMethods = new HashSet<>(dependentMethods.values().stream().flatMap(Set::stream).toList());
         allMethods.add(mainMethod);
 
         for (MethodDeclaration method : allMethods) {
             method.findAll(NameExpr.class).forEach(nameExpr -> {
                 String fieldName = nameExpr.getNameAsString();
-                sourceClass.getFields().stream()
+                sourceFiles.values().stream()
+                        .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
+                        .flatMap(cls -> cls.getFields().stream())
                         .filter(field -> field.getVariables().stream()
                                 .anyMatch(variable -> variable.getNameAsString().equals(fieldName)))
                         .forEach(requiredFields::add);
@@ -183,3 +166,4 @@ public class MethodExtractorV1 {
         return requiredFields;
     }
 }
+
