@@ -13,8 +13,19 @@ import com.ifba.prodscalpel4objects.extractor.MethodExtractorV1;
 public class Prodscalpel4objects {
 
     public static void main(String[] args) {
-        MethodExtractorV1 em = new MethodExtractorV1();
-        
-        em.extract();
-    }
+        String sourceRootPath = "C:\\Users\\Lara.rodrigues\\Documents\\prodExemple\\src\\main\\java\\";
+
+        // Caminho completo para o arquivo-fonte que contém o método processData
+        String sourceFilePath = "C:\\Users\\Lara.rodrigues\\Documents\\prodExemple\\src\\main\\java\\org\\example\\service\\ServiceClass.java";
+
+        // Nome do método a ser extraído
+        String methodName = "processData";
+
+        // Cria uma instância do extrator de métodos
+        MethodExtractorV1 methodExtractor = new MethodExtractorV1(sourceRootPath);
+
+        // Extrai o método especificado para um novo arquivo
+        methodExtractor.extract(sourceFilePath, methodName);
+
+        System.out.println("Extração concluída.");    }
 }

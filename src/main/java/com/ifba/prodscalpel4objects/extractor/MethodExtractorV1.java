@@ -17,26 +17,26 @@ import java.util.*;
 
 /**
  * Classe responsável por extrair um método e suas dependências para um novo arquivo.
+ * Agora com suporte para dependências em classes de outros pacotes.
  *
  * @author lara
  */
 public class MethodExtractorV1 {
 
-    public MethodExtractorV1() {
+    private final Path sourceRoot;
+
+    public MethodExtractorV1(String sourceRootPath) {
+        this.sourceRoot = Paths.get(sourceRootPath);
     }
 
     // Método principal para extração
-    public void extract() {
+    public void extract(String sourceFilePath, String methodToBeExtracted) {
         try {
-            // Caminho para o arquivo fonte
-            String path = "src/main/resources/SourceExemple.java";
-
-            // Nome do método a ser extraído
-            String methodToBeExtracted = "threeSquared";
+            // Caminho para o arquivo-fonte
+            File source = new File(sourceFilePath);
 
             // Cria uma instância do JavaParser para analisar o código
             JavaParser javaParser = new JavaParser();
-            File source = new File(path);
 
             // Faz o parse do arquivo fonte
             ParseResult<CompilationUnit> sourceParseResult = javaParser.parse(source);
@@ -65,7 +65,8 @@ public class MethodExtractorV1 {
             }
 
             // Obtém todos os métodos dependentes (em cadeia)
-            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass);
+            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, sourceParseResult.getResult().orElseThrow());
+
 
             // Obtém todos os atributos necessários pelos métodos (principal e dependentes)
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
@@ -111,10 +112,6 @@ public class MethodExtractorV1 {
                 }
             }
 
-            // debugando
-            //System.out.println("Conteúdo gerado para o arquivo de destino:");
-            //System.out.println(targetCU.toString());
-
             // Escreve o conteúdo atualizado no arquivo de destino
             Files.write(targetFile.toPath(), targetCU.toString().getBytes());
 
@@ -126,7 +123,9 @@ public class MethodExtractorV1 {
     /**
      * Encontra todos os métodos dependentes (em cadeia) chamados dentro de um método.
      */
-    private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass) {
+    private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method,
+                                                           ClassOrInterfaceDeclaration sourceClass,
+                                                           CompilationUnit sourceCompilationUnit) {
         Set<MethodDeclaration> allDependentMethods = new HashSet<>();
         Set<MethodDeclaration> processedMethods = new HashSet<>();
         Set<MethodDeclaration> methodsToProcess = new HashSet<>();
@@ -149,15 +148,80 @@ public class MethodExtractorV1 {
                         m -> m.getNameAsString().equals(calledMethodName));
 
                 if (dependentMethodOpt.isPresent()) {
-                    MethodDeclaration dependentMethod = dependentMethodOpt.get();
-                    allDependentMethods.add(dependentMethod);
-                    methodsToProcess.add(dependentMethod);
+                    System.out.println("Método dependente encontrado: " + calledMethodName);
+                    allDependentMethods.add(dependentMethodOpt.get());
+                    methodsToProcess.add(dependentMethodOpt.get());
+                } else {
+                    System.out.println("Método dependente externo: " + calledMethodName);
+                    dependentMethodOpt = findExternalMethod(call, sourceCompilationUnit); // Passa a CompilationUnit
+                    dependentMethodOpt.ifPresent(dependentMethod -> {
+                        allDependentMethods.add(dependentMethod);
+                        methodsToProcess.add(dependentMethod);
+                    });
                 }
             }
         }
 
         return allDependentMethods;
     }
+
+    /**
+     * Tenta localizar um método em classes externas.
+     */
+    private Optional<MethodDeclaration> findExternalMethod(MethodCallExpr call, CompilationUnit sourceCompilationUnit) {
+        try {
+            // Obtém o escopo do método chamado (ex: "utilityClass")
+            String scopeName = call.getScope().map(Object::toString).orElse("");
+            if (scopeName.isEmpty()) {
+                return Optional.empty();
+            }
+
+            // Encontra a declaração da variável correspondente ao escopo
+            Optional<String> className = sourceCompilationUnit.findAll(FieldDeclaration.class).stream()
+                    .filter(field -> field.getVariables().stream()
+                            .anyMatch(variable -> variable.getNameAsString().equals(scopeName)))
+                    .map(field -> field.getElementType().asString())
+                    .findFirst();
+
+            if (className.isEmpty()) {
+                System.out.println("Classe não encontrada para o escopo: " + scopeName);
+                return Optional.empty();
+            }
+
+            // Analisa os imports para encontrar o caminho completo da classe
+            Optional<String> importPath = sourceCompilationUnit.getImports().stream()
+                    .map(importDecl -> importDecl.getName().toString())
+                    .filter(importedClass -> importedClass.endsWith(className.get()))
+                    .findFirst();
+
+            if (importPath.isEmpty()) {
+                System.out.println("Import correspondente não encontrado para a classe: " + className.get());
+                return Optional.empty();
+            }
+
+            // Constrói o caminho do arquivo baseado no import
+            Path classFilePath = sourceRoot.resolve(importPath.get().replace(".", "/") + ".java");
+            if (!Files.exists(classFilePath)) {
+                System.out.println("Arquivo não encontrado para a classe importada: " + importPath.get());
+                return Optional.empty();
+            }
+
+            // Faz o parse do arquivo encontrado
+            JavaParser javaParser = new JavaParser();
+            ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
+
+            // Busca o método chamado dentro da classe encontrada
+            return parseResult.getResult()
+                    .flatMap(cu -> cu.findFirst(ClassOrInterfaceDeclaration.class))
+                    .flatMap(cls -> cls.findFirst(MethodDeclaration.class,
+                            m -> m.getNameAsString().equals(call.getNameAsString())));
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Optional.empty();
+        }
+    }
+
 
     /**
      * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
