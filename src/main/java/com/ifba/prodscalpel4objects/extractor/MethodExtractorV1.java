@@ -10,6 +10,7 @@ import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -29,7 +30,9 @@ public class MethodExtractorV1 {
         this.sourceRoot = Paths.get(sourceRootPath);
     }
 
-    // Método principal para extração
+    /**
+     * Método principal para extração
+     */
     public void extract(String sourceFilePath, String methodToBeExtracted) {
         try {
             // Caminho para o arquivo-fonte
@@ -67,7 +70,6 @@ public class MethodExtractorV1 {
             // Obtém todos os métodos dependentes (em cadeia)
             Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, sourceParseResult.getResult().orElseThrow());
 
-
             // Obtém todos os atributos necessários pelos métodos (principal e dependentes)
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
 
@@ -77,43 +79,90 @@ public class MethodExtractorV1 {
                 Files.createDirectory(targetDirectory);
             }
 
-            // Nome do arquivo de destino será o mesmo do arquivo original
-            String originalFileName = source.getName();
-            File targetFile = targetDirectory.resolve(originalFileName).toFile();
+            // **Gerar arquivos para todas as classes no mesmo arquivo fonte**
+            sourceParseResult.getResult().ifPresent(cu -> {
+                List<ClassOrInterfaceDeclaration> allClasses = cu.findAll(ClassOrInterfaceDeclaration.class);
+                allClasses.forEach(cls -> {
+                    try {
+                        // Nome do arquivo será baseado no nome da classe
+                        String classFileName = cls.getNameAsString() + ".java";
+                        File classFile = targetDirectory.resolve(classFileName).toFile();
 
-            // Cria ou substitui o arquivo de destino
-            if (targetFile.exists()) {
-                Files.delete(targetFile.toPath());
+                        // Cria ou substitui o arquivo da classe
+                        if (classFile.exists()) {
+                            Files.delete(classFile.toPath());
+                        }
+                        classFile.createNewFile();
+
+                        // Cria um novo CompilationUnit para a classe
+                        CompilationUnit classCU = new CompilationUnit();
+                        classCU.addType(cls.clone());
+
+                        // Escreve a classe no arquivo
+                        Files.write(classFile.toPath(), classCU.toString().getBytes());
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                });
+            });
+
+            // Além disso, adiciona os métodos e campos necessários à classe principal
+            String mainClassFileName = sourceClass.getNameAsString() + ".java";
+            File mainClassFile = targetDirectory.resolve(mainClassFileName).toFile();
+            if (mainClassFile.exists()) {
+                Files.delete(mainClassFile.toPath());
             }
-            targetFile.createNewFile();
+            mainClassFile.createNewFile();
 
-            // Faz o parse do arquivo de destino
-            ParseResult<CompilationUnit> targetParseResult = javaParser.parse(targetFile);
+            CompilationUnit mainCU = new CompilationUnit();
+            ClassOrInterfaceDeclaration mainClass = new ClassOrInterfaceDeclaration();
+            mainClass.setName(sourceClass.getNameAsString());
 
-            // Obtém ou cria a classe no arquivo de destino
-            CompilationUnit targetCU = targetParseResult.getResult().orElse(new CompilationUnit());
-            ClassOrInterfaceDeclaration targetClass = targetCU.findFirst(ClassOrInterfaceDeclaration.class)
-                    .orElseGet(() -> targetCU.addClass(originalFileName.replace(".java", "")));
-
-            // Adiciona o método principal ao arquivo de destino
-            targetClass.addMember(method.clone());
-
-            // Adiciona os métodos dependentes ao arquivo de destino, evitando duplicações
+            // Adiciona o método principal e dependências à classe principal
+            mainClass.addMember(method.clone());
+            // Para cada método dependente, crie um arquivo separado com o nome da classe original.
             for (MethodDeclaration depMethod : dependentMethods) {
-                if (targetClass.getMethodsByName(depMethod.getNameAsString()).isEmpty()) {
-                    targetClass.addMember(depMethod.clone());
+                Optional<ClassOrInterfaceDeclaration> parentClassOpt = depMethod.findAncestor(ClassOrInterfaceDeclaration.class);
+                if (parentClassOpt.isPresent()) {
+                    ClassOrInterfaceDeclaration parentClass = parentClassOpt.get();
+
+                    // Cria um novo CompilationUnit para o método
+                    CompilationUnit methodCU = new CompilationUnit();
+                    ClassOrInterfaceDeclaration newClass = methodCU.addClass(parentClass.getNameAsString());
+                    newClass.addMember(depMethod.clone());
+
+                    // Adiciona os campos necessários
+                    for (FieldDeclaration field : requiredFields) {
+                        if (newClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
+                            newClass.addMember(field.clone());
+                        }
+                    }
+
+                    // Escreve o método em um arquivo separado
+                    String methodFileName = parentClass.getNameAsString() + "_" + depMethod.getNameAsString() + ".java";
+                    File methodFile = targetDirectory.resolve(methodFileName).toFile();
+
+                    if (methodFile.exists()) {
+                        Files.delete(methodFile.toPath());
+                    }
+                    Files.write(methodFile.toPath(), methodCU.toString().getBytes());
+
+                    System.out.println("Método extraído: " + depMethod.getNameAsString() + " em " + methodFileName);
                 }
             }
 
-            // Adiciona os atributos necessários ao arquivo de destino, evitando duplicações
+
+            // Adiciona os campos necessários à classe principal
             for (FieldDeclaration field : requiredFields) {
-                if (targetClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
-                    targetClass.addMember(field.clone());
+                if (mainClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
+                    mainClass.addMember(field.clone());
                 }
             }
 
-            // Escreve o conteúdo atualizado no arquivo de destino
-            Files.write(targetFile.toPath(), targetCU.toString().getBytes());
+            mainCU.addType(mainClass);
+
+            // Escreve a classe principal no arquivo
+            Files.write(mainClassFile.toPath(), mainCU.toString().getBytes());
 
         } catch (Exception e) {
             e.printStackTrace();
