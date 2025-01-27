@@ -35,135 +35,60 @@ public class MethodExtractorV1 {
      */
     public void extract(String sourceFilePath, String methodToBeExtracted) {
         try {
-            // Caminho para o arquivo-fonte
             File source = new File(sourceFilePath);
-
-            // Cria uma instância do JavaParser para analisar o código
             JavaParser javaParser = new JavaParser();
-
-            // Faz o parse do arquivo fonte
             ParseResult<CompilationUnit> sourceParseResult = javaParser.parse(source);
 
-            // Encontra a classe principal no arquivo fonte
-            Optional<ClassOrInterfaceDeclaration> sourceClassOpt = sourceParseResult.getResult()
-                    .flatMap(cu -> cu.findFirst(ClassOrInterfaceDeclaration.class));
+            Optional<CompilationUnit> cuOpt = sourceParseResult.getResult();
+            if (cuOpt.isEmpty()) {
+                System.out.println("Falha ao analisar o arquivo: " + sourceFilePath);
+                return;
+            }
+            CompilationUnit cu = cuOpt.get();
 
-            // Verifica se a classe foi encontrada
-            if (!sourceClassOpt.isPresent()) {
+            Optional<String> packageNameOpt = cu.getPackageDeclaration().map(pd -> pd.getNameAsString());
+            String packagePath = packageNameOpt.map(pkg -> pkg.replace(".", "/")).orElse("");
+            Path targetDirectory = Paths.get("IceBox", packagePath);
+            Files.createDirectories(targetDirectory);
+
+            Optional<ClassOrInterfaceDeclaration> sourceClassOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
+            if (sourceClassOpt.isEmpty()) {
                 System.out.println("Classe fonte não encontrada.");
                 return;
             }
-
-            // Obtém a classe encontrada
             ClassOrInterfaceDeclaration sourceClass = sourceClassOpt.get();
 
-            // Encontra o método a ser extraído dentro da classe fonte
             MethodDeclaration method = sourceClass.findFirst(MethodDeclaration.class,
                     m -> m.getNameAsString().equals(methodToBeExtracted)).orElse(null);
 
-            // Verifica se o método foi encontrado
             if (method == null) {
                 System.out.println("Método não encontrado: " + methodToBeExtracted);
                 return;
             }
 
-            // Obtém todos os métodos dependentes (em cadeia)
-            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, sourceParseResult.getResult().orElseThrow());
-
-            // Obtém todos os atributos necessários pelos métodos (principal e dependentes)
+            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu);
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
 
-            // Diretório de destino
-            Path targetDirectory = Paths.get("IceBox");
-            if (!Files.exists(targetDirectory)) {
-                Files.createDirectory(targetDirectory);
+            for (ClassOrInterfaceDeclaration cls : cu.findAll(ClassOrInterfaceDeclaration.class)) {
+                String classFileName = cls.getNameAsString() + ".java";
+                File classFile = targetDirectory.resolve(classFileName).toFile();
+                Files.writeString(classFile.toPath(), cu.toString());
             }
 
-            // **Gerar arquivos para todas as classes no mesmo arquivo fonte**
-            sourceParseResult.getResult().ifPresent(cu -> {
-                List<ClassOrInterfaceDeclaration> allClasses = cu.findAll(ClassOrInterfaceDeclaration.class);
-                allClasses.forEach(cls -> {
-                    try {
-                        // Nome do arquivo será baseado no nome da classe
-                        String classFileName = cls.getNameAsString() + ".java";
-                        File classFile = targetDirectory.resolve(classFileName).toFile();
-
-                        // Cria ou substitui o arquivo da classe
-                        if (classFile.exists()) {
-                            Files.delete(classFile.toPath());
-                        }
-                        classFile.createNewFile();
-
-                        // Cria um novo CompilationUnit para a classe
-                        CompilationUnit classCU = new CompilationUnit();
-                        classCU.addType(cls.clone());
-
-                        // Escreve a classe no arquivo
-                        Files.write(classFile.toPath(), classCU.toString().getBytes());
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                });
-            });
-
-            // Além disso, adiciona os métodos e campos necessários à classe principal
-            String mainClassFileName = sourceClass.getNameAsString() + ".java";
-            File mainClassFile = targetDirectory.resolve(mainClassFileName).toFile();
-            if (mainClassFile.exists()) {
-                Files.delete(mainClassFile.toPath());
-            }
-            mainClassFile.createNewFile();
-
-            CompilationUnit mainCU = new CompilationUnit();
-            ClassOrInterfaceDeclaration mainClass = new ClassOrInterfaceDeclaration();
-            mainClass.setName(sourceClass.getNameAsString());
-
-            // Adiciona o método principal e dependências à classe principal
-            mainClass.addMember(method.clone());
-            // Para cada método dependente, crie um arquivo separado com o nome da classe original.
             for (MethodDeclaration depMethod : dependentMethods) {
                 Optional<ClassOrInterfaceDeclaration> parentClassOpt = depMethod.findAncestor(ClassOrInterfaceDeclaration.class);
                 if (parentClassOpt.isPresent()) {
                     ClassOrInterfaceDeclaration parentClass = parentClassOpt.get();
-
-                    // Cria um novo CompilationUnit para o método
                     CompilationUnit methodCU = new CompilationUnit();
+                    packageNameOpt.ifPresent(methodCU::setPackageDeclaration);
                     ClassOrInterfaceDeclaration newClass = methodCU.addClass(parentClass.getNameAsString());
                     newClass.addMember(depMethod.clone());
+                    requiredFields.forEach(field -> newClass.addMember(field.clone()));
 
-                    // Adiciona os campos necessários
-                    for (FieldDeclaration field : requiredFields) {
-                        if (newClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
-                            newClass.addMember(field.clone());
-                        }
-                    }
-
-                    // Escreve o método em um arquivo separado
                     String methodFileName = parentClass.getNameAsString() + "_" + depMethod.getNameAsString() + ".java";
-                    File methodFile = targetDirectory.resolve(methodFileName).toFile();
-
-                    if (methodFile.exists()) {
-                        Files.delete(methodFile.toPath());
-                    }
-                    Files.write(methodFile.toPath(), methodCU.toString().getBytes());
-
-                    System.out.println("Método extraído: " + depMethod.getNameAsString() + " em " + methodFileName);
+                    Files.writeString(targetDirectory.resolve(methodFileName), methodCU.toString());
                 }
             }
-
-
-            // Adiciona os campos necessários à classe principal
-            for (FieldDeclaration field : requiredFields) {
-                if (mainClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
-                    mainClass.addMember(field.clone());
-                }
-            }
-
-            mainCU.addType(mainClass);
-
-            // Escreve a classe principal no arquivo
-            Files.write(mainClassFile.toPath(), mainCU.toString().getBytes());
-
         } catch (Exception e) {
             e.printStackTrace();
         }
