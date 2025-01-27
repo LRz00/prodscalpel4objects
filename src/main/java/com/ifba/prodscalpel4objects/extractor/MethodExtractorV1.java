@@ -22,16 +22,27 @@ import java.util.*;
  *
  * @author lara
  */
+
+// TODO: - Fix External methods directory creation
+//  -Test with more complex tasks to see how it deals with inheritance and polymorphism
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
 
+    /**
+     * Construtor da classe MethodExtractorV1.
+     *
+     * @param sourceRootPath Caminho do diretório raiz do código-fonte.
+     */
     public MethodExtractorV1(String sourceRootPath) {
         this.sourceRoot = Paths.get(sourceRootPath);
     }
 
     /**
-     * Método principal para extração
+     * Método principal para extração do método e suas dependências.
+     *
+     * @param sourceFilePath Caminho do arquivo-fonte.
+     * @param methodToBeExtracted Nome do método a ser extraído.
      */
     public void extract(String sourceFilePath, String methodToBeExtracted) {
         try {
@@ -78,12 +89,27 @@ public class MethodExtractorV1 {
         }
     }
 
+    /**
+     * Salva o arquivo da classe extraída.
+     *
+     * @param cu A unidade de compilação da classe.
+     * @param cls A classe a ser salva.
+     * @param targetDirectory O diretório de destino para o arquivo da classe.
+     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
+     */
     private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory) throws IOException {
         String classFileName = cls.getNameAsString() + ".java";
         Path classFilePath = targetDirectory.resolve(classFileName);
         Files.writeString(classFilePath, cu.toString());
     }
 
+    /**
+     * Salva o método externo em um arquivo se ele ainda não existir.
+     *
+     * @param method O método a ser salvo.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
+     */
     private void saveExternalMethod(MethodDeclaration method, CompilationUnit sourceCU) throws IOException {
         Optional<ClassOrInterfaceDeclaration> parentClassOpt = method.findAncestor(ClassOrInterfaceDeclaration.class);
         if (parentClassOpt.isEmpty()) return;
@@ -95,15 +121,53 @@ public class MethodExtractorV1 {
         Path methodTargetDirectory = Paths.get("IceBox", importPath.get().replace(".", "/"));
         Files.createDirectories(methodTargetDirectory);
 
-        CompilationUnit methodCU = new CompilationUnit();
-        methodCU.setPackageDeclaration(importPath.get());
-        ClassOrInterfaceDeclaration newClass = methodCU.addClass(parentClass.getNameAsString());
-        newClass.addMember(method.clone());
+        Path classFilePath = methodTargetDirectory.resolve(parentClass.getNameAsString() + ".java");
 
-        String methodFileName = parentClass.getNameAsString() + "_" + method.getNameAsString() + ".java";
-        Files.writeString(methodTargetDirectory.resolve(methodFileName), methodCU.toString());
+        CompilationUnit methodCU;
+        ClassOrInterfaceDeclaration newClass;
+
+        if (Files.exists(classFilePath)) {
+            // Se a classe já existir, carregamos seu conteúdo
+            String existingCode = Files.readString(classFilePath);
+            JavaParser parser = new JavaParser();
+            ParseResult<CompilationUnit> parseResult = parser.parse(existingCode);
+
+            if (parseResult.getResult().isPresent()) {
+                methodCU = parseResult.getResult().get();
+                Optional<ClassOrInterfaceDeclaration> existingClassOpt = methodCU.findFirst(ClassOrInterfaceDeclaration.class);
+
+                if (existingClassOpt.isPresent()) {
+                    newClass = existingClassOpt.get();
+                } else {
+                    newClass = methodCU.addClass(parentClass.getNameAsString());
+                }
+            } else {
+                return; // Erro ao carregar a classe existente
+            }
+        } else {
+            // Criamos um novo arquivo se a classe não existir
+            methodCU = new CompilationUnit();
+            methodCU.setPackageDeclaration(importPath.get());
+            newClass = methodCU.addClass(parentClass.getNameAsString());
+        }
+
+        // Adicionamos o novo método, verificando se ele já não existe
+        boolean methodExists = newClass.getMethods().stream()
+                .anyMatch(m -> m.getNameAsString().equals(method.getNameAsString()));
+
+        if (!methodExists) {
+            newClass.addMember(method.clone());
+            Files.writeString(classFilePath, methodCU.toString());
+        }
     }
 
+    /**
+     * Encontra o caminho de importação de uma classe, se ela existir no código.
+     *
+     * @param className O nome da classe a ser localizada.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return O caminho de importação da classe, se encontrado.
+     */
     private Optional<String> findImportPath(String className, CompilationUnit sourceCU) {
         return sourceCU.getImports().stream()
                 .map(importDecl -> importDecl.getName().toString())
@@ -111,6 +175,14 @@ public class MethodExtractorV1 {
                 .findFirst();
     }
 
+    /**
+     * Encontra todos os métodos dependentes do método fornecido.
+     *
+     * @param method O método principal para o qual as dependências devem ser encontradas.
+     * @param sourceClass A classe onde os métodos são definidos.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return Um conjunto de métodos dependentes.
+     */
     private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method,
                                                            ClassOrInterfaceDeclaration sourceClass,
                                                            CompilationUnit sourceCU) {
@@ -146,6 +218,13 @@ public class MethodExtractorV1 {
         return allDependentMethods;
     }
 
+    /**
+     * Encontra métodos externos chamados por um método, se eles existirem.
+     *
+     * @param call A expressão de chamada do método.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return O método dependente externo, se encontrado.
+     */
     private Optional<MethodDeclaration> findExternalMethod(MethodCallExpr call, CompilationUnit sourceCU) {
         try {
             String scopeName = call.getScope().map(Object::toString).orElse("");
@@ -175,8 +254,14 @@ public class MethodExtractorV1 {
             return Optional.empty();
         }
     }
+
     /**
      * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
+     *
+     * @param mainMethod O método principal.
+     * @param dependentMethods Métodos dependentes.
+     * @param sourceClass A classe onde os campos são definidos.
+     * @return Um conjunto de campos necessários.
      */
     private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
                                                      ClassOrInterfaceDeclaration sourceClass) {
