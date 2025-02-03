@@ -8,155 +8,308 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.ast.type.Type;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
 /**
- * Classe responsável por extrair um método e suas dependências para novos arquivos.
+ * Classe responsável por extrair um método e suas dependências para um novo arquivo.
+ * Agora com suporte para dependências em classes de outros pacotes.
  *
  * @author lara
  */
+
+// TODO: - Handle non-explicit imports, and imports from the same package
+//  - Handle spring Injections
 public class MethodExtractorV1 {
 
-    public MethodExtractorV1() {
+    private final Path sourceRoot;
+
+    /**
+     * Construtor da classe MethodExtractorV1.
+     *
+     * @param sourceRootPath Caminho do diretório raiz do código-fonte.
+     */
+    public MethodExtractorV1(String sourceRootPath) {
+        this.sourceRoot = Paths.get(sourceRootPath);
     }
 
-    public void extract() {
+    /**
+     * Método principal para extração do método e suas dependências.
+     *
+     * @param sourceFilePath Caminho do arquivo-fonte.
+     * @param methodToBeExtracted Nome do método a ser extraído.
+     */
+    public void extract(String sourceFilePath, String methodToBeExtracted) {
         try {
-            // Caminho do diretório fonte
-            String sourceDirPath = "/home/lara/Documentos/TCC-EXAMPLE/src/com/example/service/";
-            String methodToBeExtracted = "processDataWithExtraLogic";
-
-            // Diretório de destino
-            Path targetDirectory = Paths.get("IceBox");
-            if (!Files.exists(targetDirectory)) {
-                Files.createDirectory(targetDirectory);
-            }
-
-            // Inicializa o JavaParser
+            File source = new File(sourceFilePath);
             JavaParser javaParser = new JavaParser();
+            ParseResult<CompilationUnit> sourceParseResult = javaParser.parse(source);
 
-            // Analisa todos os arquivos no diretório fonte
-            Map<String, CompilationUnit> sourceFiles = new HashMap<>();
-            Files.walk(Paths.get(sourceDirPath))
-                    .filter(path -> path.toString().endsWith(".java"))
-                    .forEach(path -> {
-                        try {
-                            ParseResult<CompilationUnit> parseResult = javaParser.parse(path.toFile());
-                            parseResult.getResult().ifPresent(cu -> sourceFiles.put(path.getFileName().toString(), cu));
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    });
+            Optional<CompilationUnit> cuOpt = sourceParseResult.getResult();
+            if (cuOpt.isEmpty()) {
+                System.out.println("Falha ao analisar o arquivo: " + sourceFilePath);
+                return;
+            }
+            CompilationUnit cu = cuOpt.get();
 
-            // Busca o método principal em todas as classes
-            Optional<MethodDeclaration> mainMethodOpt = sourceFiles.values().stream()
-                    .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
-                    .flatMap(cls -> cls.findAll(MethodDeclaration.class).stream())
-                    .filter(method -> method.getNameAsString().equals(methodToBeExtracted))
-                    .findFirst();
+            Optional<String> packageNameOpt = cu.getPackageDeclaration().map(pd -> pd.getNameAsString());
+            String packagePath = packageNameOpt.map(pkg -> pkg.replace(".", "/")).orElse("");
+            Path targetDirectory = Paths.get("IceBox", packagePath);
+            Files.createDirectories(targetDirectory);
 
-            if (!mainMethodOpt.isPresent()) {
-                System.out.println("Método principal não encontrado: " + methodToBeExtracted);
+            Optional<ClassOrInterfaceDeclaration> sourceClassOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
+            if (sourceClassOpt.isEmpty()) {
+                System.out.println("Classe fonte não encontrada.");
+                return;
+            }
+            ClassOrInterfaceDeclaration sourceClass = sourceClassOpt.get();
+
+            MethodDeclaration method = sourceClass.findFirst(MethodDeclaration.class,
+                    m -> m.getNameAsString().equals(methodToBeExtracted)).orElse(null);
+
+            if (method == null) {
+                System.out.println("Método não encontrado: " + methodToBeExtracted);
                 return;
             }
 
-            MethodDeclaration mainMethod = mainMethodOpt.get();
-            ClassOrInterfaceDeclaration mainClass = (ClassOrInterfaceDeclaration) mainMethod.getParentNode().get();
+            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu, Paths.get(sourceFilePath).getParent());
+            Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
+            Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
 
-            // Encontra dependências
-            Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> dependentMethods = findAllDependentMethods(mainMethod, mainClass, sourceFiles);
-            Set<FieldDeclaration> requiredFields = findRequiredFields(mainMethod, dependentMethods, sourceFiles);
+            saveClassFile(cu, sourceClass, targetDirectory);
 
-            // Escreve métodos e dependências em arquivos separados
-            for (Map.Entry<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> entry : dependentMethods.entrySet()) {
-                ClassOrInterfaceDeclaration sourceClass = entry.getKey();
-                Set<MethodDeclaration> methods = entry.getValue();
-
-                // Nome do arquivo de destino
-                String targetFileName = sourceClass.getNameAsString() + ".java";
-                File targetFile = targetDirectory.resolve(targetFileName).toFile();
-
-                CompilationUnit targetCU = new CompilationUnit();
-                ClassOrInterfaceDeclaration targetClass = targetCU.addClass(sourceClass.getNameAsString());
-
-                // Adiciona métodos
-                for (MethodDeclaration method : methods) {
-                    targetClass.addMember(method.clone());
-                }
-
-                // Adiciona campos se for a classe principal
-                if (sourceClass.equals(mainClass)) {
-                    for (FieldDeclaration field : requiredFields) {
-                        if (targetClass.getFieldByName(field.getVariables().get(0).getNameAsString()).isEmpty()) {
-                            targetClass.addMember(field.clone());
-                        }
-                    }
-                }
-
-                // Escreve o arquivo
-                Files.write(targetFile.toPath(), targetCU.toString().getBytes());
+            for (MethodDeclaration depMethod : dependentMethods) {
+                saveExternalMethod(depMethod, cu);
             }
 
+            for (String className : requiredClasses) {
+                saveClass(className, cu);
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> findAllDependentMethods(
-            MethodDeclaration method,
-            ClassOrInterfaceDeclaration mainClass,
-            Map<String, CompilationUnit> sourceFiles) {
-
-        Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> result = new HashMap<>();
-        Queue<MethodDeclaration> queue = new LinkedList<>();
-        queue.add(method);
-
-        while (!queue.isEmpty()) {
-            MethodDeclaration currentMethod = queue.poll();
-            ClassOrInterfaceDeclaration currentClass = (ClassOrInterfaceDeclaration) currentMethod.getParentNode().get();
-
-            result.putIfAbsent(currentClass, new HashSet<>());
-            if (!result.get(currentClass).add(currentMethod)) {
-                continue; // Método já processado
-            }
-
-            // Encontra chamadas de método
-            List<MethodCallExpr> methodCalls = currentMethod.findAll(MethodCallExpr.class);
-            for (MethodCallExpr call : methodCalls) {
-                String calledMethodName = call.getNameAsString();
-
-                // Procura o método na classe atual ou em outras classes
-                sourceFiles.values().stream()
-                        .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
-                        .flatMap(cls -> cls.findAll(MethodDeclaration.class).stream())
-                        .filter(m -> m.getNameAsString().equals(calledMethodName))
-                        .forEach(queue::add);
-            }
-        }
-
-        return result;
+    /**
+     * Salva o arquivo da classe extraída.
+     *
+     * @param cu A unidade de compilação da classe.
+     * @param cls A classe a ser salva.
+     * @param targetDirectory O diretório de destino para o arquivo da classe.
+     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
+     */
+    private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory) throws IOException {
+        String classFileName = cls.getNameAsString() + ".java";
+        Path classFilePath = targetDirectory.resolve(classFileName);
+        Files.writeString(classFilePath, cu.toString());
     }
 
-    private Set<FieldDeclaration> findRequiredFields(
-            MethodDeclaration mainMethod,
-            Map<ClassOrInterfaceDeclaration, Set<MethodDeclaration>> dependentMethods,
-            Map<String, CompilationUnit> sourceFiles) {
+    /**
+     * Salva o método externo em um arquivo se ele ainda não existir.
+     *
+     * @param method O método a ser salvo.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
+     */
+    private void saveExternalMethod(MethodDeclaration method, CompilationUnit sourceCU) throws IOException {
+        Optional<ClassOrInterfaceDeclaration> parentClassOpt = method.findAncestor(ClassOrInterfaceDeclaration.class);
+        if (parentClassOpt.isEmpty()) return;
 
+        ClassOrInterfaceDeclaration parentClass = parentClassOpt.get();
+        Optional<String> importPath = findImportPath(parentClass.getNameAsString(), sourceCU);
+        if (importPath.isEmpty()) return;
+
+        Path methodTargetDirectory = Paths.get("IceBox", importPath.get().replace(".", "/"));
+        Files.createDirectories(methodTargetDirectory);
+
+        Path classFilePath = methodTargetDirectory.resolve(parentClass.getNameAsString() + ".java");
+
+        CompilationUnit methodCU;
+        ClassOrInterfaceDeclaration newClass;
+
+        if (Files.exists(classFilePath)) {
+            String existingCode = Files.readString(classFilePath);
+            JavaParser parser = new JavaParser();
+            ParseResult<CompilationUnit> parseResult = parser.parse(existingCode);
+
+            if (parseResult.getResult().isPresent()) {
+                methodCU = parseResult.getResult().get();
+                Optional<ClassOrInterfaceDeclaration> existingClassOpt = methodCU.findFirst(ClassOrInterfaceDeclaration.class);
+
+                if (existingClassOpt.isPresent()) {
+                    newClass = existingClassOpt.get();
+                } else {
+                    newClass = methodCU.addClass(parentClass.getNameAsString());
+                }
+            } else {
+                return;
+            }
+        } else {
+            methodCU = new CompilationUnit();
+            methodCU.setPackageDeclaration(importPath.get());
+            newClass = methodCU.addClass(parentClass.getNameAsString());
+        }
+
+        boolean methodExists = newClass.getMethods().stream()
+                .anyMatch(m -> m.getNameAsString().equals(method.getNameAsString()));
+
+        if (!methodExists) {
+            newClass.addMember(method.clone());
+            Files.writeString(classFilePath, methodCU.toString());
+        }
+    }
+
+    /**
+     * Encontra o caminho de importação de uma classe, se ela existir no código.
+     *
+     * @param className O nome da classe a ser localizada.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return O caminho de importação da classe, se encontrado.
+     */
+    private Optional<String> findImportPath(String className, CompilationUnit sourceCU) {
+        return sourceCU.getImports().stream()
+                .map(importDecl -> importDecl.getName().toString())
+                .filter(importedClass -> importedClass.endsWith(className))
+                .findFirst();
+    }
+
+    /**
+     * Encontra todos os métodos dependentes do método fornecido.
+     *
+     * @param method O método principal para o qual as dependências devem ser encontradas.
+     * @param sourceClass A classe onde os métodos são definidos.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @param sourceRoot O diretório raiz do código-fonte.
+     * @return Um conjunto de métodos dependentes.
+     */
+    private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method,
+                                                           ClassOrInterfaceDeclaration sourceClass,
+                                                           CompilationUnit sourceCU,
+                                                           Path sourceRoot) {
+        Set<MethodDeclaration> allDependentMethods = new HashSet<>();
+        Set<MethodDeclaration> processedMethods = new HashSet<>();
+        Set<MethodDeclaration> methodsToProcess = new HashSet<>();
+        methodsToProcess.add(method);
+
+        while (!methodsToProcess.isEmpty()) {
+            MethodDeclaration currentMethod = methodsToProcess.iterator().next();
+            methodsToProcess.remove(currentMethod);
+
+            if (processedMethods.contains(currentMethod)) continue;
+            processedMethods.add(currentMethod);
+
+            List<MethodCallExpr> methodCalls = currentMethod.findAll(MethodCallExpr.class);
+            for (MethodCallExpr call : methodCalls) {
+                Optional<MethodDeclaration> dependentMethodOpt = sourceClass.findFirst(MethodDeclaration.class,
+                        m -> m.getNameAsString().equals(call.getNameAsString()));
+
+                if (dependentMethodOpt.isPresent()) {
+                    MethodDeclaration dependentMethod = dependentMethodOpt.get();
+                    if (!processedMethods.contains(dependentMethod)) {
+                        allDependentMethods.add(dependentMethod);
+                        methodsToProcess.add(dependentMethod);
+                    }
+                } else {
+                    dependentMethodOpt = findExternalMethod(call, sourceCU);
+                    dependentMethodOpt.ifPresent(dependentMethod -> {
+                        if (!processedMethods.contains(dependentMethod)) {
+                            allDependentMethods.add(dependentMethod);
+                            methodsToProcess.add(dependentMethod);
+                        }
+                    });
+                }
+            }
+
+            Set<String> instantiatedClasses = findInstantiatedClasses(currentMethod, sourceCU);
+            for (String className : instantiatedClasses) {
+                Optional<String> importPath = findImportPath(className, sourceCU);
+                if (importPath.isPresent()) {
+                    Path classFilePath = sourceRoot.resolve(importPath.get().replace(".", "/") + ".java");
+                    if (Files.exists(classFilePath)) {
+                        try {
+                            JavaParser javaParser = new JavaParser();
+                            ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
+                            if (parseResult.getResult().isPresent()) {
+                                CompilationUnit classCU = parseResult.getResult().get();
+                                classCU.findFirst(ClassOrInterfaceDeclaration.class)
+                                        .ifPresent(classDecl -> {
+                                            System.out.println("Classe dependente encontrada: " + classDecl.getNameAsString());
+                                        });
+                            }
+                        } catch (IOException e) {
+                            System.err.println("Erro ao ler o arquivo da classe: " + classFilePath);
+                        }
+                    }
+                }
+            }
+        }
+        return allDependentMethods;
+    }
+
+    /**
+     * Encontra métodos externos chamados por um método, se eles existirem.
+     *
+     * @param call A expressão de chamada do método.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return O método dependente externo, se encontrado.
+     */
+    private Optional<MethodDeclaration> findExternalMethod(MethodCallExpr call, CompilationUnit sourceCU) {
+        try {
+            String scopeName = call.getScope().map(Object::toString).orElse("");
+            if (scopeName.isEmpty()) return Optional.empty();
+
+            Optional<String> className = sourceCU.findAll(FieldDeclaration.class).stream()
+                    .filter(field -> field.getVariables().stream()
+                            .anyMatch(variable -> variable.getNameAsString().equals(scopeName)))
+                    .map(field -> field.getElementType().asString())
+                    .findFirst();
+
+            if (className.isEmpty()) return Optional.empty();
+            Optional<String> importPath = findImportPath(className.get(), sourceCU);
+            if (importPath.isEmpty()) return Optional.empty();
+
+            Path classFilePath = sourceRoot.resolve(importPath.get().replace(".", "/") + ".java");
+            if (!Files.exists(classFilePath)) return Optional.empty();
+
+            JavaParser javaParser = new JavaParser();
+            ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
+            return parseResult.getResult()
+                    .flatMap(cu -> cu.findFirst(ClassOrInterfaceDeclaration.class))
+                    .flatMap(cls -> cls.findFirst(MethodDeclaration.class,
+                            m -> m.getNameAsString().equals(call.getNameAsString())));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
+     *
+     * @param mainMethod O método principal.
+     * @param dependentMethods Métodos dependentes.
+     * @param sourceClass A classe onde os campos são definidos.
+     * @return Um conjunto de campos necessários.
+     */
+    private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
+                                                     ClassOrInterfaceDeclaration sourceClass) {
         Set<FieldDeclaration> requiredFields = new HashSet<>();
-        Set<MethodDeclaration> allMethods = new HashSet<>(dependentMethods.values().stream().flatMap(Set::stream).toList());
+
+        List<MethodDeclaration> allMethods = new ArrayList<>(dependentMethods);
         allMethods.add(mainMethod);
 
         for (MethodDeclaration method : allMethods) {
             method.findAll(NameExpr.class).forEach(nameExpr -> {
                 String fieldName = nameExpr.getNameAsString();
-                sourceFiles.values().stream()
-                        .flatMap(cu -> cu.findAll(ClassOrInterfaceDeclaration.class).stream())
-                        .flatMap(cls -> cls.getFields().stream())
+                sourceClass.getFields().stream()
                         .filter(field -> field.getVariables().stream()
                                 .anyMatch(variable -> variable.getNameAsString().equals(fieldName)))
                         .forEach(requiredFields::add);
@@ -165,5 +318,99 @@ public class MethodExtractorV1 {
 
         return requiredFields;
     }
-}
 
+    /**
+     * Encontra classes instanciadas dentro do método.
+     *
+     * @param method O método analisado.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return Um conjunto de classes instanciadas dentro do método.
+     */
+    private Set<String> findInstantiatedClasses(MethodDeclaration method, CompilationUnit sourceCU) {
+        Set<String> instantiatedClasses = new HashSet<>();
+
+        method.findAll(ObjectCreationExpr.class).forEach(objCreation -> {
+            String className = objCreation.getTypeAsString();
+            instantiatedClasses.add(className);
+        });
+
+        return instantiatedClasses;
+    }
+
+    /**
+     * Encontra classes necessárias para a execução do método, incluindo tipos de retorno, parâmetros e campos.
+     *
+     * @param method O método analisado.
+     * @param sourceClass A classe onde o método está definido.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @return Um conjunto de classes necessárias.
+     */
+    private Set<String> findRequiredClasses(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass, CompilationUnit sourceCU) {
+        Set<String> requiredClasses = new HashSet<>();
+
+        // Adiciona classes usadas como tipos de retorno e parâmetros
+        Type type = method.getType();
+        if (type instanceof ClassOrInterfaceType) {
+            requiredClasses.add(((ClassOrInterfaceType) type).getNameAsString());
+        }
+
+        method.getParameters().forEach(parameter -> {
+            if (parameter.getType() instanceof ClassOrInterfaceType) {
+                requiredClasses.add(((ClassOrInterfaceType) parameter.getType()).getNameAsString());
+            }
+        });
+
+        // Adiciona classes usadas como tipos de campos
+        sourceClass.getFields().forEach(field -> {
+            if (field.getElementType() instanceof ClassOrInterfaceType) {
+                requiredClasses.add(((ClassOrInterfaceType) field.getElementType()).getNameAsString());
+            }
+        });
+
+        return requiredClasses;
+    }
+
+    /**
+     * Salva uma classe no diretório IceBox, mantendo a estrutura de diretórios original.
+     *
+     * @param className O nome da classe a ser salva.
+     * @param sourceCU A unidade de compilação do código-fonte.
+     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
+     */
+    private void saveClass(String className, CompilationUnit sourceCU) throws IOException {
+        // Encontra o caminho de importação da classe
+        Optional<String> importPath = findImportPath(className, sourceCU);
+        if (importPath.isEmpty()) {
+            System.out.println("Caminho de importação não encontrado para a classe: " + className);
+            return;
+        }
+
+        // Converte o caminho de importação para o formato de diretório
+        String packagePath = importPath.get().replace(".", "/");
+        Path classFilePath = sourceRoot.resolve(packagePath + ".java");
+
+        if (!Files.exists(classFilePath)) {
+            System.out.println("Arquivo da classe não encontrado: " + classFilePath);
+            return;
+        }
+
+        // Cria o diretório de destino no IceBox com a estrutura de pacotes original
+        Path targetDirectory = Paths.get("IceBox", packagePath).getParent();
+        if (targetDirectory == null) {
+            System.out.println("Não foi possível determinar o diretório de destino para a classe: " + className);
+            return;
+        }
+        Files.createDirectories(targetDirectory);
+
+        // Salva a classe no diretório correto
+        Path targetClassFilePath = Paths.get("IceBox", packagePath + ".java");
+        JavaParser javaParser = new JavaParser();
+        ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
+
+        if (parseResult.getResult().isPresent()) {
+            CompilationUnit classCU = parseResult.getResult().get();
+            Files.writeString(targetClassFilePath, classCU.toString());
+            System.out.println("Classe salva em: " + targetClassFilePath);
+        }
+    }
+}
