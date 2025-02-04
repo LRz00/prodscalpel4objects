@@ -27,7 +27,8 @@ import java.util.*;
  */
 
 // TODO: - Handle non-explicit imports, and imports from the same package
-//  - Handle spring Injections
+//  - Handle spring Injection
+//  - Handle imports with *
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -175,10 +176,36 @@ public class MethodExtractorV1 {
      * @return O caminho de importação da classe, se encontrado.
      */
     private Optional<String> findImportPath(String className, CompilationUnit sourceCU) {
-        return sourceCU.getImports().stream()
+        // Limpa o nome da classe
+        String sanitizedClassName = sanitizeClassName(className);
+
+        // Verifica as importações explícitas
+        Optional<String> explicitImport = sourceCU.getImports().stream()
                 .map(importDecl -> importDecl.getName().toString())
-                .filter(importedClass -> importedClass.endsWith(className))
+                .filter(importedClass -> importedClass.endsWith(sanitizedClassName))
                 .findFirst();
+
+        if (explicitImport.isPresent()) {
+            return explicitImport;
+        }
+
+        // Verifica se a classe está no mesmo pacote
+        Optional<String> packageName = sourceCU.getPackageDeclaration().map(pd -> pd.getNameAsString());
+        if (packageName.isPresent()) {
+            String samePackageClass = packageName.get() + "." + sanitizedClassName;
+            Path samePackagePath = sourceRoot.resolve(packageName.get().replace(".", "/") + "/" + sanitizedClassName + ".java");
+            if (Files.exists(samePackagePath)) {
+                return Optional.of(samePackageClass);
+            }
+        }
+
+        // Verifica se a classe está no pacote padrão (sem pacote)
+        Path defaultPackagePath = sourceRoot.resolve(sanitizedClassName + ".java");
+        if (Files.exists(defaultPackagePath)) {
+            return Optional.of(sanitizedClassName);
+        }
+
+        return Optional.empty();
     }
 
     /**
@@ -338,7 +365,7 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Encontra classes necessárias para a execução do método, incluindo tipos de retorno, parâmetros e campos.
+     * Encontra classes necessárias para a execução do método, incluindo tipos de retorno, parâmetros, campos e dependências injetadas.
      *
      * @param method O método analisado.
      * @param sourceClass A classe onde o método está definido.
@@ -367,6 +394,15 @@ public class MethodExtractorV1 {
             }
         });
 
+        // Adiciona classes injetadas via Spring (campos com @Autowired ou @RequiredArgsConstructor)
+        sourceClass.getFields().forEach(field -> {
+            if (field.isAnnotationPresent("Autowired") || field.isAnnotationPresent("RequiredArgsConstructor")) {
+                if (field.getElementType() instanceof ClassOrInterfaceType) {
+                    requiredClasses.add(((ClassOrInterfaceType) field.getElementType()).getNameAsString());
+                }
+            }
+        });
+
         return requiredClasses;
     }
 
@@ -378,10 +414,12 @@ public class MethodExtractorV1 {
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
     private void saveClass(String className, CompilationUnit sourceCU) throws IOException {
-        // Encontra o caminho de importação da classe
-        Optional<String> importPath = findImportPath(className, sourceCU);
+        // Limpa o nome da classe
+        String sanitizedClassName = sanitizeClassName(className);
+
+        Optional<String> importPath = findImportPath(sanitizedClassName, sourceCU);
         if (importPath.isEmpty()) {
-            System.out.println("Caminho de importação não encontrado para a classe: " + className);
+            System.out.println("Caminho de importação não encontrado para a classe: " + sanitizedClassName);
             return;
         }
 
@@ -397,7 +435,7 @@ public class MethodExtractorV1 {
         // Cria o diretório de destino no IceBox com a estrutura de pacotes original
         Path targetDirectory = Paths.get("IceBox", packagePath).getParent();
         if (targetDirectory == null) {
-            System.out.println("Não foi possível determinar o diretório de destino para a classe: " + className);
+            System.out.println("Não foi possível determinar o diretório de destino para a classe: " + sanitizedClassName);
             return;
         }
         Files.createDirectories(targetDirectory);
@@ -412,5 +450,16 @@ public class MethodExtractorV1 {
             Files.writeString(targetClassFilePath, classCU.toString());
             System.out.println("Classe salva em: " + targetClassFilePath);
         }
+    }
+
+    /**
+     * Remove caracteres inválidos do nome da classe para criar um caminho de arquivo válido.
+     *
+     * @param className O nome da classe.
+     * @return O nome da classe sem caracteres inválidos.
+     */
+    private String sanitizeClassName(String className) {
+        // Remove caracteres inválidos, como < e >
+        return className.replaceAll("[<>]", "");
     }
 }
