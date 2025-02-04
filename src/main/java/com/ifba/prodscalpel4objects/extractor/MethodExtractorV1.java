@@ -26,9 +26,8 @@ import java.util.*;
  * @author lara
  */
 
-// TODO: - Handle non-explicit imports, and imports from the same package
-//  - Handle spring Injection
-//  - Handle imports with *
+// TODO: - Fix extra directory creation
+//  - Fix Method Extraction(Every method in class is being save, needs to have one Compilation Unit per method)
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -170,6 +169,7 @@ public class MethodExtractorV1 {
 
     /**
      * Encontra o caminho de importação de uma classe, se ela existir no código.
+     * Agora com suporte para importações com *.
      *
      * @param className O nome da classe a ser localizada.
      * @param sourceCU A unidade de compilação do código-fonte.
@@ -187,6 +187,21 @@ public class MethodExtractorV1 {
 
         if (explicitImport.isPresent()) {
             return explicitImport;
+        }
+
+        // Verifica importações com *
+        Optional<String> wildcardImport = sourceCU.getImports().stream()
+                .filter(importDecl -> importDecl.isAsterisk()) // Verifica se é uma importação com *
+                .map(importDecl -> importDecl.getName().toString() + "." + sanitizedClassName) // Constrói o caminho completo
+                .filter(importedClass -> {
+                    // Verifica se o arquivo da classe existe no pacote
+                    Path classFilePath = sourceRoot.resolve(importedClass.replace(".", "/") + ".java");
+                    return Files.exists(classFilePath);
+                })
+                .findFirst();
+
+        if (wildcardImport.isPresent()) {
+            return wildcardImport;
         }
 
         // Verifica se a classe está no mesmo pacote
@@ -207,7 +222,6 @@ public class MethodExtractorV1 {
 
         return Optional.empty();
     }
-
     /**
      * Encontra todos os métodos dependentes do método fornecido.
      *
