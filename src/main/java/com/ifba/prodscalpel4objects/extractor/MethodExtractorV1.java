@@ -27,7 +27,6 @@ import java.util.*;
  */
 
 // TODO: - Fix extra directory creation
-//  - Fix Method Extraction(Every method in class is being save, needs to have one Compilation Unit per method)
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -82,14 +81,17 @@ public class MethodExtractorV1 {
 
             Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu, Paths.get(sourceFilePath).getParent());
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
-            Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
 
-            saveClassFile(cu, sourceClass, targetDirectory);
+            // Salva a classe do método principal
+            saveClassFile(cu, sourceClass, targetDirectory, method, requiredFields);
 
+            // Salva métodos externos
             for (MethodDeclaration depMethod : dependentMethods) {
                 saveExternalMethod(depMethod, cu);
             }
 
+            // Salva classes dependentes
+            Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
             for (String className : requiredClasses) {
                 saveClass(className, cu);
             }
@@ -97,19 +99,37 @@ public class MethodExtractorV1 {
             e.printStackTrace();
         }
     }
-
     /**
-     * Salva o arquivo da classe extraída.
+     * Salva o arquivo da classe extraída, contendo apenas o método principal e seus campos necessários.
      *
      * @param cu A unidade de compilação da classe.
      * @param cls A classe a ser salva.
      * @param targetDirectory O diretório de destino para o arquivo da classe.
+     * @param mainMethod O método principal que está sendo extraído.
+     * @param requiredFields Os campos necessários para o método principal.
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
-    private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory) throws IOException {
+    private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory,
+                               MethodDeclaration mainMethod, Set<FieldDeclaration> requiredFields) throws IOException {
+        // Cria uma nova CompilationUnit com o mesmo pacote e imports
+        CompilationUnit newCU = new CompilationUnit();
+        cu.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
+        cu.getImports().forEach(newCU::addImport);
+
+        // Cria uma nova classe com o mesmo nome
+        ClassOrInterfaceDeclaration newClass = newCU.addClass(cls.getNameAsString());
+
+        // Copia os campos necessários
+        requiredFields.forEach(newClass::addMember);
+
+        // Copia o método principal
+        newClass.addMember(mainMethod.clone());
+
+        // Salva a nova CompilationUnit no diretório de destino
         String classFileName = cls.getNameAsString() + ".java";
         Path classFilePath = targetDirectory.resolve(classFileName);
-        Files.writeString(classFilePath, cu.toString());
+        Files.writeString(classFilePath, newCU.toString());
+        System.out.println("Classe salva em: " + classFilePath);
     }
 
     /**
@@ -127,15 +147,18 @@ public class MethodExtractorV1 {
         Optional<String> importPath = findImportPath(parentClass.getNameAsString(), sourceCU);
         if (importPath.isEmpty()) return;
 
+        // Cria o diretório de destino no IceBox com a estrutura de pacotes original
         Path methodTargetDirectory = Paths.get("IceBox", importPath.get().replace(".", "/"));
         Files.createDirectories(methodTargetDirectory);
 
+        // Define o caminho do arquivo da classe
         Path classFilePath = methodTargetDirectory.resolve(parentClass.getNameAsString() + ".java");
 
         CompilationUnit methodCU;
         ClassOrInterfaceDeclaration newClass;
 
         if (Files.exists(classFilePath)) {
+            // Se o arquivo já existe, carrega o conteúdo existente
             String existingCode = Files.readString(classFilePath);
             JavaParser parser = new JavaParser();
             ParseResult<CompilationUnit> parseResult = parser.parse(existingCode);
@@ -150,20 +173,24 @@ public class MethodExtractorV1 {
                     newClass = methodCU.addClass(parentClass.getNameAsString());
                 }
             } else {
-                return;
+                return; // Erro ao carregar o arquivo existente
             }
         } else {
+            // Cria um novo arquivo se ele não existir
             methodCU = new CompilationUnit();
             methodCU.setPackageDeclaration(importPath.get());
             newClass = methodCU.addClass(parentClass.getNameAsString());
         }
 
+        // Verifica se o método já existe no arquivo
         boolean methodExists = newClass.getMethods().stream()
                 .anyMatch(m -> m.getNameAsString().equals(method.getNameAsString()));
 
         if (!methodExists) {
+            // Adiciona o método ao arquivo
             newClass.addMember(method.clone());
             Files.writeString(classFilePath, methodCU.toString());
+            System.out.println("Método salvo em: " + classFilePath);
         }
     }
 
@@ -222,6 +249,7 @@ public class MethodExtractorV1 {
 
         return Optional.empty();
     }
+
     /**
      * Encontra todos os métodos dependentes do método fornecido.
      *
