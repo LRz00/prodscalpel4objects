@@ -82,12 +82,27 @@ public class MethodExtractorV1 {
             Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu, Paths.get(sourceFilePath).getParent());
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
 
-            // Salva a classe do método principal
-            saveClassFile(cu, sourceClass, targetDirectory, method, requiredFields);
+            // Separa os métodos dependentes em duas categorias:
+            // 1. Métodos da mesma classe (AnimalService).
+            // 2. Métodos de outras classes.
+            Set<MethodDeclaration> sameClassMethods = new HashSet<>();
+            Set<MethodDeclaration> externalMethods = new HashSet<>();
 
-            // Salva métodos externos
             for (MethodDeclaration depMethod : dependentMethods) {
-                saveExternalMethod(depMethod, cu);
+                Optional<ClassOrInterfaceDeclaration> parentClassOpt = depMethod.findAncestor(ClassOrInterfaceDeclaration.class);
+                if (parentClassOpt.isPresent() && parentClassOpt.get().getNameAsString().equals(sourceClass.getNameAsString())) {
+                    sameClassMethods.add(depMethod); // Método da mesma classe
+                } else {
+                    externalMethods.add(depMethod); // Método de outra classe
+                }
+            }
+
+            // Salva a classe do método principal junto com os métodos da mesma classe
+            saveClassFile(cu, sourceClass, targetDirectory, method, sameClassMethods, requiredFields);
+
+            // Salva métodos externos (de outras classes)
+            for (MethodDeclaration externalMethod : externalMethods) {
+                saveExternalMethod(externalMethod, cu);
             }
 
             // Salva classes dependentes
@@ -99,18 +114,21 @@ public class MethodExtractorV1 {
             e.printStackTrace();
         }
     }
+
     /**
-     * Salva o arquivo da classe extraída, contendo apenas o método principal e seus campos necessários.
+     * Salva o arquivo da classe extraída, contendo o método principal e os métodos dependentes da mesma classe.
      *
      * @param cu A unidade de compilação da classe.
      * @param cls A classe a ser salva.
      * @param targetDirectory O diretório de destino para o arquivo da classe.
      * @param mainMethod O método principal que está sendo extraído.
-     * @param requiredFields Os campos necessários para o método principal.
+     * @param dependentMethods Os métodos dependentes da mesma classe.
+     * @param requiredFields Os campos necessários para os métodos.
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
     private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory,
-                               MethodDeclaration mainMethod, Set<FieldDeclaration> requiredFields) throws IOException {
+                               MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
+                               Set<FieldDeclaration> requiredFields) throws IOException {
         // Cria uma nova CompilationUnit com o mesmo pacote e imports
         CompilationUnit newCU = new CompilationUnit();
         cu.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
@@ -125,13 +143,17 @@ public class MethodExtractorV1 {
         // Copia o método principal
         newClass.addMember(mainMethod.clone());
 
+        // Copia os métodos dependentes da mesma classe
+        for (MethodDeclaration depMethod : dependentMethods) {
+            newClass.addMember(depMethod.clone());
+        }
+
         // Salva a nova CompilationUnit no diretório de destino
         String classFileName = cls.getNameAsString() + ".java";
         Path classFilePath = targetDirectory.resolve(classFileName);
         Files.writeString(classFilePath, newCU.toString());
         System.out.println("Classe salva em: " + classFilePath);
     }
-
     /**
      * Salva o método externo em um arquivo se ele ainda não existir.
      *
@@ -181,6 +203,9 @@ public class MethodExtractorV1 {
             methodCU.setPackageDeclaration(importPath.get());
             newClass = methodCU.addClass(parentClass.getNameAsString());
         }
+
+        // Adiciona os imports necessários
+        sourceCU.getImports().forEach(methodCU::addImport);
 
         // Verifica se o método já existe no arquivo
         boolean methodExists = newClass.getMethods().stream()
