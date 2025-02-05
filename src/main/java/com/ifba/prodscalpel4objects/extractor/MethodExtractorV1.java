@@ -26,7 +26,7 @@ import java.util.*;
  * @author lara
  */
 
-// TODO: - Fix extra directory creation
+// TODO: - extra methods being extracted in external classes
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -43,7 +43,7 @@ public class MethodExtractorV1 {
     /**
      * Método principal para extração do método e suas dependências.
      *
-     * @param sourceFilePath Caminho do arquivo-fonte.
+     * @param sourceFilePath      Caminho do arquivo-fonte.
      * @param methodToBeExtracted Nome do método a ser extraído.
      */
     public void extract(String sourceFilePath, String methodToBeExtracted) {
@@ -118,12 +118,12 @@ public class MethodExtractorV1 {
     /**
      * Salva o arquivo da classe extraída, contendo o método principal e os métodos dependentes da mesma classe.
      *
-     * @param cu A unidade de compilação da classe.
-     * @param cls A classe a ser salva.
-     * @param targetDirectory O diretório de destino para o arquivo da classe.
-     * @param mainMethod O método principal que está sendo extraído.
+     * @param cu               A unidade de compilação da classe.
+     * @param cls              A classe a ser salva.
+     * @param targetDirectory  O diretório de destino para o arquivo da classe.
+     * @param mainMethod       O método principal que está sendo extraído.
      * @param dependentMethods Os métodos dependentes da mesma classe.
-     * @param requiredFields Os campos necessários para os métodos.
+     * @param requiredFields   Os campos necessários para os métodos.
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
     private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory,
@@ -154,10 +154,11 @@ public class MethodExtractorV1 {
         Files.writeString(classFilePath, newCU.toString());
         System.out.println("Classe salva em: " + classFilePath);
     }
+
     /**
      * Salva o método externo em um arquivo se ele ainda não existir.
      *
-     * @param method O método a ser salvo.
+     * @param method   O método a ser salvo.
      * @param sourceCU A unidade de compilação do código-fonte.
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
@@ -169,11 +170,18 @@ public class MethodExtractorV1 {
         Optional<String> importPath = findImportPath(parentClass.getNameAsString(), sourceCU);
         if (importPath.isEmpty()) return;
 
+        // Remove o nome da classe do importPath (corta até o último ponto final)
+        String packagePath = importPath.get();
+        int lastDotIndex = packagePath.lastIndexOf('.');
+        if (lastDotIndex != -1) {
+            packagePath = packagePath.substring(0, lastDotIndex); // Corta até o último ponto
+        }
+
         // Cria o diretório de destino no IceBox com a estrutura de pacotes original
-        Path methodTargetDirectory = Paths.get("IceBox", importPath.get().replace(".", "/"));
+        Path methodTargetDirectory = Paths.get("IceBox", packagePath.replace(".", "/"));
         Files.createDirectories(methodTargetDirectory);
 
-        // Define o caminho do arquivo da classe
+        // Define o caminho do arquivo da classe (sem criar subdiretórios adicionais)
         Path classFilePath = methodTargetDirectory.resolve(parentClass.getNameAsString() + ".java");
 
         CompilationUnit methodCU;
@@ -200,7 +208,7 @@ public class MethodExtractorV1 {
         } else {
             // Cria um novo arquivo se ele não existir
             methodCU = new CompilationUnit();
-            methodCU.setPackageDeclaration(importPath.get());
+            methodCU.setPackageDeclaration(packagePath); // Usa o packagePath sem o nome da classe
             newClass = methodCU.addClass(parentClass.getNameAsString());
         }
 
@@ -218,13 +226,12 @@ public class MethodExtractorV1 {
             System.out.println("Método salvo em: " + classFilePath);
         }
     }
-
     /**
      * Encontra o caminho de importação de uma classe, se ela existir no código.
      * Agora com suporte para importações com *.
      *
      * @param className O nome da classe a ser localizada.
-     * @param sourceCU A unidade de compilação do código-fonte.
+     * @param sourceCU  A unidade de compilação do código-fonte.
      * @return O caminho de importação da classe, se encontrado.
      */
     private Optional<String> findImportPath(String className, CompilationUnit sourceCU) {
@@ -278,10 +285,10 @@ public class MethodExtractorV1 {
     /**
      * Encontra todos os métodos dependentes do método fornecido.
      *
-     * @param method O método principal para o qual as dependências devem ser encontradas.
+     * @param method      O método principal para o qual as dependências devem ser encontradas.
      * @param sourceClass A classe onde os métodos são definidos.
-     * @param sourceCU A unidade de compilação do código-fonte.
-     * @param sourceRoot O diretório raiz do código-fonte.
+     * @param sourceCU    A unidade de compilação do código-fonte.
+     * @param sourceRoot  O diretório raiz do código-fonte.
      * @return Um conjunto de métodos dependentes.
      */
     private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method,
@@ -351,7 +358,7 @@ public class MethodExtractorV1 {
     /**
      * Encontra métodos externos chamados por um método, se eles existirem.
      *
-     * @param call A expressão de chamada do método.
+     * @param call     A expressão de chamada do método.
      * @param sourceCU A unidade de compilação do código-fonte.
      * @return O método dependente externo, se encontrado.
      */
@@ -388,9 +395,9 @@ public class MethodExtractorV1 {
     /**
      * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
      *
-     * @param mainMethod O método principal.
+     * @param mainMethod       O método principal.
      * @param dependentMethods Métodos dependentes.
-     * @param sourceClass A classe onde os campos são definidos.
+     * @param sourceClass      A classe onde os campos são definidos.
      * @return Um conjunto de campos necessários.
      */
     private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
@@ -416,7 +423,7 @@ public class MethodExtractorV1 {
     /**
      * Encontra classes instanciadas dentro do método.
      *
-     * @param method O método analisado.
+     * @param method   O método analisado.
      * @param sourceCU A unidade de compilação do código-fonte.
      * @return Um conjunto de classes instanciadas dentro do método.
      */
@@ -434,9 +441,9 @@ public class MethodExtractorV1 {
     /**
      * Encontra classes necessárias para a execução do método, incluindo tipos de retorno, parâmetros, campos e dependências injetadas.
      *
-     * @param method O método analisado.
+     * @param method      O método analisado.
      * @param sourceClass A classe onde o método está definido.
-     * @param sourceCU A unidade de compilação do código-fonte.
+     * @param sourceCU    A unidade de compilação do código-fonte.
      * @return Um conjunto de classes necessárias.
      */
     private Set<String> findRequiredClasses(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass, CompilationUnit sourceCU) {
@@ -477,7 +484,7 @@ public class MethodExtractorV1 {
      * Salva uma classe no diretório IceBox, mantendo a estrutura de diretórios original.
      *
      * @param className O nome da classe a ser salva.
-     * @param sourceCU A unidade de compilação do código-fonte.
+     * @param sourceCU  A unidade de compilação do código-fonte.
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
     private void saveClass(String className, CompilationUnit sourceCU) throws IOException {
