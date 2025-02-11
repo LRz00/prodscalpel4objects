@@ -27,6 +27,7 @@ import java.util.*;
  */
 
 // TODO: - extra methods being extracted in external classes
+//  -ObjectClasses(types such as User, Animal, etc) are not being extracted.
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -107,14 +108,59 @@ public class MethodExtractorV1 {
 
             // Salva classes dependentes
             Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
+// No método extract, substitua a chamada para saveClass:
             for (String className : requiredClasses) {
-                saveClass(className, cu);
+                // Verifica se a classe atual é a classe fonte
+                if (className.equals(sourceClass.getNameAsString())) {
+                    // Para a classe fonte, usamos os métodos e campos já identificados
+                    saveClass(className, cu, sameClassMethods, requiredFields);
+                } else {
+                    // Para classes externas, precisamos encontrar os métodos e campos dependentes
+                    Set<MethodDeclaration> classDependentMethods = new HashSet<>();
+                    Set<FieldDeclaration> classRequiredFields = new HashSet<>();
+
+                    // Encontra a classe externa no código-fonte
+                    Optional<String> importPath = findImportPath(className, cu);
+                    if (importPath.isPresent()) {
+                        Path classFilePath = sourceRoot.resolve(importPath.get().replace(".", "/") + ".java");
+                        if (Files.exists(classFilePath)) {
+                            try {
+                                // Analisa a classe externa
+                                JavaParser exJavaParser = new JavaParser();
+                                ParseResult<CompilationUnit> parseResult = exJavaParser.parse(classFilePath);
+                                if (parseResult.getResult().isPresent()) {
+                                    CompilationUnit classCU = parseResult.getResult().get();
+                                    Optional<ClassOrInterfaceDeclaration> classOpt = classCU.findFirst(ClassOrInterfaceDeclaration.class);
+
+                                    if (classOpt.isPresent()) {
+                                        ClassOrInterfaceDeclaration externalClass = classOpt.get();
+
+                                        // Encontra os métodos dependentes na classe externa
+                                        for (MethodDeclaration externalMethod : externalMethods) {
+                                            Optional<ClassOrInterfaceDeclaration> parentClassOpt = externalMethod.findAncestor(ClassOrInterfaceDeclaration.class);
+                                            if (parentClassOpt.isPresent() && parentClassOpt.get().getNameAsString().equals(className)) {
+                                                classDependentMethods.add(externalMethod);
+                                            }
+                                        }
+
+                                        // Encontra os campos dependentes na classe externa
+                                        classRequiredFields.addAll(findRequiredFieldsForExternalClass(externalClass, classDependentMethods));
+                                    }
+                                }
+                            } catch (IOException e) {
+                                System.err.println("Erro ao ler o arquivo da classe: " + classFilePath);
+                            }
+                        }
+                    }
+
+                    // Chama saveClass com os métodos e campos dependentes da classe externa
+                    saveClass(className, cu, classDependentMethods, classRequiredFields);
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-
     /**
      * Salva o arquivo da classe extraída, contendo o método principal e os métodos dependentes da mesma classe.
      *
@@ -480,14 +526,7 @@ public class MethodExtractorV1 {
         return requiredClasses;
     }
 
-    /**
-     * Salva uma classe no diretório IceBox, mantendo a estrutura de diretórios original.
-     *
-     * @param className O nome da classe a ser salva.
-     * @param sourceCU  A unidade de compilação do código-fonte.
-     * @throws IOException Caso ocorra um erro ao escrever o arquivo.
-     */
-    private void saveClass(String className, CompilationUnit sourceCU) throws IOException {
+    private void saveClass(String className, CompilationUnit sourceCU, Set<MethodDeclaration> dependentMethods, Set<FieldDeclaration> requiredFields) throws IOException {
         // Limpa o nome da classe
         String sanitizedClassName = sanitizeClassName(className);
 
@@ -521,11 +560,72 @@ public class MethodExtractorV1 {
 
         if (parseResult.getResult().isPresent()) {
             CompilationUnit classCU = parseResult.getResult().get();
-            Files.writeString(targetClassFilePath, classCU.toString());
-            System.out.println("Classe salva em: " + targetClassFilePath);
+            Optional<ClassOrInterfaceDeclaration> classOpt = classCU.findFirst(ClassOrInterfaceDeclaration.class);
+
+            if (classOpt.isPresent()) {
+                ClassOrInterfaceDeclaration originalClass = classOpt.get();
+                CompilationUnit newCU = new CompilationUnit();
+                classCU.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
+                classCU.getImports().forEach(newCU::addImport);
+
+                // Cria uma nova classe com o mesmo nome, extends, implements e outras palavras-chave
+                ClassOrInterfaceDeclaration newClass = newCU.addClass(originalClass.getNameAsString());
+
+                // Copia extends
+                if (originalClass.getExtendedTypes().isNonEmpty()) {
+                    originalClass.getExtendedTypes().forEach(newClass::addExtendedType);
+                }
+
+                // Copia implements
+                if (originalClass.getImplementedTypes().isNonEmpty()) {
+                    originalClass.getImplementedTypes().forEach(newClass::addImplementedType);
+                }
+
+                // Copia todos os campos da classe original
+                originalClass.getFields().forEach(newClass::addMember);
+
+                // Copia os métodos dependentes
+                for (MethodDeclaration method : dependentMethods) {
+                    newClass.addMember(method.clone());
+                }
+
+                // Verifica e inclui getters e setters para todos os campos
+                for (FieldDeclaration field : originalClass.getFields()) {
+                    String fieldName = field.getVariable(0).getNameAsString();
+                    String fieldType = field.getElementType().asString();
+
+                    // Busca getters e setters na classe original
+                    originalClass.getMethods().forEach(method -> {
+                        String methodName = method.getNameAsString();
+
+                        // Verifica se é um getter
+                        if (methodName.equals("get" + capitalize(fieldName)) ||
+                                (fieldType.equals("boolean") && methodName.equals("is" + capitalize(fieldName)))) {
+                            if (method.getParameters().isEmpty() && method.getType().asString().equals(fieldType)) {
+                                newClass.addMember(method.clone());
+                            }
+                        }
+
+                        // Verifica se é um setter
+                        if (methodName.equals("set" + capitalize(fieldName))) {
+                            if (method.getParameters().size() == 1 &&
+                                    method.getParameters().get(0).getType().asString().equals(fieldType) &&
+                                    method.getType().asString().equals("void")) {
+                                newClass.addMember(method.clone());
+                            }
+                        }
+                    });
+                }
+
+                // Salva a nova CompilationUnit no diretório de destino
+                Files.writeString(targetClassFilePath, newCU.toString());
+                System.out.println("Classe salva em: " + targetClassFilePath);
+            }
         }
     }
-
+    private String capitalize(String str) {
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
+    }
     /**
      * Remove caracteres inválidos do nome da classe para criar um caminho de arquivo válido.
      *
@@ -535,5 +635,29 @@ public class MethodExtractorV1 {
     private String sanitizeClassName(String className) {
         // Remove caracteres inválidos, como < e >
         return className.replaceAll("[<>]", "");
+    }
+
+    /**
+     * Encontra os campos necessários para os métodos dependentes em uma classe externa.
+     *
+     * @param externalClass      A classe externa a ser analisada.
+     * @param dependentMethods   Os métodos dependentes na classe externa.
+     * @return Um conjunto de campos necessários.
+     */
+    private Set<FieldDeclaration> findRequiredFieldsForExternalClass(ClassOrInterfaceDeclaration externalClass,
+                                                                     Set<MethodDeclaration> dependentMethods) {
+        Set<FieldDeclaration> requiredFields = new HashSet<>();
+
+        for (MethodDeclaration method : dependentMethods) {
+            method.findAll(NameExpr.class).forEach(nameExpr -> {
+                String fieldName = nameExpr.getNameAsString();
+                externalClass.getFields().stream()
+                        .filter(field -> field.getVariables().stream()
+                                .anyMatch(variable -> variable.getNameAsString().equals(fieldName)))
+                        .forEach(requiredFields::add);
+            });
+        }
+
+        return requiredFields;
     }
 }
