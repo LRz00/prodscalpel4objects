@@ -1,6 +1,9 @@
 package com.ifba.prodscalpel4objects.implementer;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -14,6 +17,7 @@ public class Implementer {
 
     private String hostRootPath;
     private String receiverRootPath;
+    private List<String> pathOfFileNames = new ArrayList<>();
 
     public Implementer(String hostRootPath, String receiverRootPath) {
         this.hostRootPath = hostRootPath;
@@ -23,11 +27,10 @@ public class Implementer {
     /**
      * Método principal que inicia a cópia dos arquivos Java encontrados no projeto.
      */
-    public void implement(){
+    public void implement() {
         System.out.println("Começando copiar os arquivos");
         List<File> javaFiles = findJavaFilesInProject();
         String packageName;
-        String fileNameWithPackage;
 
         for(File javaFile : javaFiles){
             packageName = getPackageNameFromFile(javaFile);
@@ -36,6 +39,10 @@ public class Implementer {
         }
 
         System.out.println("Todos os arquivos foram copiados.");
+
+        for(String path : pathOfFileNames){
+            modifyLinesOfTheFile(path);
+        }
 
     }
 
@@ -46,7 +53,7 @@ public class Implementer {
      * @param packageName Nome do pacote do arquivo.
      * @param fileName Nome do arquivo.
      */
-    public  void copyJavaFile(String sourceFilePath, String packageName, String fileName) {
+    private void copyJavaFile(String sourceFilePath, String packageName, String fileName) {
         String destinationFilePath = "C:\\Users\\Micro\\IdeaProjects\\tcc\\receiverexample\\src\\main\\java\\org\\exemple\\receiverexample\\" + packageName;
         System.out.println("Caminho: " + destinationFilePath);
 
@@ -75,6 +82,8 @@ public class Implementer {
 
             System.out.println("Arquivo copiado com sucesso para: " + destinationFilePath);
 
+            pathOfFileNames.add(destinationFilePath);
+
         } catch (IOException e) {
             System.err.println("Erro ao copiar o arquivo: " + e.getMessage());
         }
@@ -92,8 +101,8 @@ public class Implementer {
             File parent = file.getParentFile();
             List<String> packageParts = new ArrayList<>();
 
-            // Percorre os diretórios superiores até encontrar a pasta do projeto
-            while (parent != null && !parent.getName().equals(projectName)) {
+            // Percorre os diretórios superiores até encontrar a pasta do projeto. Não pega o pacote IceBox
+            while (parent != null && !parent.getName().equals(projectName) && !parent.getName().equals("IceBox")) {
                 packageParts.add(0, parent.getName()); // Adiciona no início para manter a ordem correta
                 parent = parent.getParentFile();
             }
@@ -193,5 +202,71 @@ public class Implementer {
             return sentence;
         }
         return sentence.substring(0, 1).toUpperCase() + sentence.substring(1);
+    }
+
+    /**
+     * Adiciona ou modifica a linha package.
+     *
+     * @param filePath o caminho de cada arquivo a ser modificado.
+     */
+    public void modifyLinesOfTheFile(String filePath) {
+        File file = new File(filePath);
+        String packageName = getPackageNameFromJavaFolder(file);
+
+        Path path = Paths.get(filePath);
+
+        List<String> lines = new ArrayList<>();
+
+        try {
+            lines = Files.readAllLines(path);
+        }catch (IOException e){
+            System.out.println("Erro ao ler arquivo: " + e.getMessage());
+        }
+
+        boolean existsPackage = false;
+
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).startsWith("package")) {
+                lines.set(i, "package ".concat(packageName).concat(";"));
+                System.out.println("Linha package: " + lines.get(i));
+                existsPackage = true;
+                break;
+            }
+        }
+
+        if(!existsPackage){
+            lines.addFirst("package ".concat(packageName).concat(";"));
+            System.out.println("Linha package: " + lines.getFirst());
+        }
+
+        try {
+            Files.write(path, lines);
+            System.out.println("Arquivo atualizado com sucesso.");
+        } catch (IOException e) {
+            System.out.println("Erro ao salvar o arquivo: " + e.getMessage());
+        }
+
+    }
+
+    /**
+     * Pega o pacote de cada arquivo a partir da pasta java.
+     *
+     * @param file o arquivo que terá o pacote capturado.
+     */
+    private String getPackageNameFromJavaFolder(File file) {
+        if (file != null && file.exists()) {
+            File parent = file.getParentFile();
+            List<String> packageParts = new ArrayList<>();
+
+            // Percorre os diretórios superiores até encontrar a pasta "java"
+            while (parent != null && !parent.getName().equals("java")) {
+                packageParts.add(0, parent.getName()); // Adiciona no início para manter a ordem correta
+                parent = parent.getParentFile();
+            }
+
+            // Retorna o caminho do pacote no formato correto ou uma string vazia se estiver diretamente em "java"
+            return packageParts.isEmpty() ? "" : String.join(".", packageParts);
+        }
+        return "Pasta Desconhecida";
     }
 }
