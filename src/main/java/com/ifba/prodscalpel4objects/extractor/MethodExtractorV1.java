@@ -9,6 +9,7 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
 
@@ -26,8 +27,7 @@ import java.util.*;
  * @author lara
  */
 
-// TODO: - extra methods being extracted in external classes
-//  -ObjectClasses(types such as User, Animal, etc) are not being extracted.
+// TODO: -Class annotations are not being preserved in extracted code.
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -523,9 +523,17 @@ public class MethodExtractorV1 {
             }
         });
 
+        // Adiciona classes declaradas dentro do método (variáveis locais)
+        method.findAll(VariableDeclarationExpr.class).forEach(variableDeclaration -> {
+            variableDeclaration.getVariables().forEach(variable -> {
+                if (variable.getType() instanceof ClassOrInterfaceType) {
+                    requiredClasses.add(((ClassOrInterfaceType) variable.getType()).getNameAsString());
+                }
+            });
+        });
+
         return requiredClasses;
     }
-
     private void saveClass(String className, CompilationUnit sourceCU, Set<MethodDeclaration> dependentMethods, Set<FieldDeclaration> requiredFields) throws IOException {
         // Limpa o nome da classe
         String sanitizedClassName = sanitizeClassName(className);
