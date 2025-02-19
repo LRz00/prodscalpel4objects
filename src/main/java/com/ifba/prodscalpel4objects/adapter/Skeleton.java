@@ -5,3 +5,4 @@ package com.ifba.prodscalpel4objects.adapter;
  */
 public class Skeleton {
 }
+
