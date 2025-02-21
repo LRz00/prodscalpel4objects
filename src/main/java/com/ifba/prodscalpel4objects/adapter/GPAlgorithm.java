@@ -11,8 +11,15 @@ import java.util.List;
 import java.util.Random;
 
 /**
-* Core GP Algorithm.
-*
+* Core GP Algorithm, responsável por reduzir o código do over-organ
+ * e adaptá-lo ao ambiente do host.
+ * <p>
+ * Características do GP Algorithm:
+ * 1. Busca Heurística: A GP explora o espaço de possíveis modificações no código do órgão para encontrar uma versão compatível com o hospedeiro.
+ * 2. Otimização: Reduz o tamanho do órgão removendo código irrelevante (ex: dead code) e ajustando chamadas de função.
+ * 3. Resolução de Conflitos: Adapta nomes de variáveis/funções e estruturas de dados para evitar colisões no hospedeiro.
+ * 4. Eficiência: O processo é repetido por múltiplas gerações até que um indivíduo passe em todos os testes.
+ * <p>
 * @author Giovane Neves
 */
 public class GPAlgorithm {
@@ -83,11 +90,11 @@ public class GPAlgorithm {
       // 2. Taxa de mapeamento de IDs (ex: variáveis/funções compatíveis com o hospedeiro)
       double mappingScore = (double) mappedIdsInHostIdsInIndividual / totalIdsInHostSymbolTable;
 
-      // 3. Simulação de teste de compilação (ex: 1.0 se compila, 0.0 caso contrário)
+      // 3. Simulação de teste de compilação (1 se compila, 0 caso contrário)
       boolean compiles = simulateCompilation(gpIndividual, localTransplantResultLocation);
       double compileScore = compiles ? 1.0 : 0.0;
 
-      // Combine os scores (ajuste os pesos conforme necessário)
+      // Combina os scores
       return (0.4 * locsScore) + (0.3 * mappingScore) + (0.3 * compileScore);
    }
 
@@ -100,6 +107,7 @@ public class GPAlgorithm {
    private boolean simulateCompilation(GPIndividual individual, String outputPath) {
 
       // TODO: Implementar lógica para simular a compilação
+      // OBS: É aqui onde será implementado o 'ice-box tests'?
 
       JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
       int compilationResult = compiler.run(null, null, null, outputPath + "Arquivo.java a ser compilado");
