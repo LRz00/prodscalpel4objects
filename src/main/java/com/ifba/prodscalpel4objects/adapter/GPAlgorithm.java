@@ -1,5 +1,8 @@
 package com.ifba.prodscalpel4objects.adapter;
 
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -21,6 +24,12 @@ public class GPAlgorithm {
     */
    private final static int POPULATION_SIZE = 100;
 
+   /**
+    * Limita o número máximo de gerações para 50
+    */
+   private final static int MAX_GENERATIONS = 50;
+
+
    // Lista de LOCs do IceBox
    private List<Integer> iceBoxLOCs;
 
@@ -32,7 +41,26 @@ public class GPAlgorithm {
     * @return A new individual with the genes of the two individuals passed by parameter.
     */
    public GPIndividual crossover(GPIndividual parent1, GPIndividual parent2) {
-      throw new UnsupportedOperationException("Not supported yet.");
+      GPIndividual child = new GPIndividual();
+      List<Integer> childLOCs = new ArrayList<>();
+
+      Random random = new Random();
+
+      // Escolhe um ponto de corte aleatório para o crossover
+      int minSize = Math.min(parent1.getSelectedLOCs().size(), parent2.getSelectedLOCs().size());
+      int crossoverPoint = random.nextInt(minSize);
+
+      // Combina LOCs dos pais:
+      // - Primeira parte do parent1
+      // - Segunda parte do parent2
+      childLOCs.addAll(parent1.getSelectedLOCs().subList(0, crossoverPoint));
+      childLOCs.addAll(parent2.getSelectedLOCs().subList(crossoverPoint, parent2.getSelectedLOCs().size()));
+
+      // Remove LOCs duplicados (garante unicidade)
+      childLOCs = new ArrayList<>(new LinkedHashSet<>(childLOCs));
+
+      child.setSelectedLOCs(childLOCs);
+      return child;
    }
 
    /**
@@ -70,8 +98,13 @@ public class GPAlgorithm {
     * @return
     */
    private boolean simulateCompilation(GPIndividual individual, String outputPath) {
+
       // TODO: Implementar lógica para simular a compilação
-      return true; // Simulação
+
+      JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+      int compilationResult = compiler.run(null, null, null, outputPath + "Arquivo.java a ser compilado");
+      return (compilationResult == 0);
+
    }
 
    /*public void computeFitnessForSubset(List<GPIndividual> individualsSubset, SymbolTable hostSymbolTable,
@@ -127,25 +160,94 @@ public class GPAlgorithm {
       return population;
    }
 
-   // Método para carregar os LOCs (exemplo)
+   // Método para carregar os LOCs
    public void setIceBoxLOCs(List<Integer> iceBoxLOCs) {
+      // TODO: Implementar essa lógica
       this.iceBoxLOCs = new ArrayList<>(iceBoxLOCs);
    }
 
    /**
     * Mutates the individual passed by parameter.
+    * Adiciona ou remove LOCs aleatoriamente para manter diversidade genética.
     *
     * @param individual The individual to be mutated.
     */
    public void mutateIndividual(GPIndividual individual) {
-      throw new UnsupportedOperationException("Not supported yet.");
+      Random random = new Random();
+      List<Integer> locs = individual.getSelectedLOCs();
+
+      // 20% de chance de adicionar um LOC ausente do IceBox
+      if (random.nextDouble() < 0.2 && !iceBoxLOCs.isEmpty()) {
+         // Escolhe um LOC aleatório do IceBox
+         Integer newLoc = iceBoxLOCs.get(random.nextInt(iceBoxLOCs.size()));
+
+         // Adiciona apenas se não existir no indivíduo
+         if (!locs.contains(newLoc)) {
+            locs.add(newLoc);
+         }
+      }
+
+      // 20% de chance de remover um LOC (exceto se o indivíduo estiver vazio)
+      if (random.nextDouble() < 0.2 && !locs.isEmpty()) {
+         // Remove um índice aleatório da lista de LOCs
+         int indexToRemove = random.nextInt(locs.size());
+         locs.remove(indexToRemove);
+      }
    }
+
    /**
-   * Executa o GP Algorithm.
-   * 
-   */
-   public void run(){
-     // TODO: Adiciona lógica do GP Algorithm 
+    * Executa o GP Algorithm.
+    * Controla o loop principal de evolução: avaliação, seleção, crossover e mutação.
+    */
+   public void run() {
+
+      // Gera a população inicial
+      List<GPIndividual> population = generateInitialPopulation();
+
+      for (int gen = 0; gen < MAX_GENERATIONS; gen++) {
+         // Passo 1: Avalia o fitness de cada indivíduo
+         for (GPIndividual individual : population) {
+
+            // TODO: Avaliar essa parte aqui do código para adaptar para a realidade do ProdScalpel
+            // Parâmetros de exemplo (ajuste conforme sua lógica real):
+            int totalIdsInHost = 100; // Total de IDs (variáveis, funções, classes) no código hospedeiro
+            int mappedIds = individual.getSelectedLOCs().size(); // Simplificação: mapeia todos os LOCs
+            int locs = individual.getSelectedLOCs().size(); // Quantidade de LOCs do indivíduo
+            String outputPath = "/outputs/simulations"; // Caminho para salvar o output das simulações
+
+            // Calcula o fitness
+            double fitness = computeFitness(individual, totalIdsInHost, mappedIds, locs, outputPath);
+            individual.setFitness(fitness);
+         }
+
+         // Passo 2: Seleciona a próxima geração (elitismo + torneio)
+         List<GPIndividual> nextGen = selectNextGeneration(population, POPULATION_SIZE);
+
+         // Passo 3: Gera a nova população via crossover e mutação
+         List<GPIndividual> offspring = new ArrayList<>();
+         Random random = new Random();
+
+         for (int i = 0; i < POPULATION_SIZE; i++) {
+            // Seleciona dois pais aleatórios da próxima geração
+            GPIndividual parent1 = nextGen.get(random.nextInt(nextGen.size()));
+            GPIndividual parent2 = nextGen.get(random.nextInt(nextGen.size()));
+
+            // Realiza crossover
+            GPIndividual child = crossover(parent1, parent2);
+
+            // Aplica mutação
+            mutateIndividual(child);
+
+            offspring.add(child);
+         }
+
+         // Passo 4: Substitui a população antiga pela nova
+         population = offspring;
+
+         // Log do melhor fitness da geração
+         GPIndividual best = Collections.max(population, Comparator.comparingDouble(GPIndividual::getFitness));
+         System.out.println("Geração " + gen + " | Melhor Fitness: " + best.getFitness());
+      }
    }
 
 
