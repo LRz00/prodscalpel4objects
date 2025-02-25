@@ -3,6 +3,7 @@ package com.ifba.prodscalpel4objects.extractor;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -161,6 +162,7 @@ public class MethodExtractorV1 {
             e.printStackTrace();
         }
     }
+
     /**
      * Salva o arquivo da classe extraída, contendo o método principal e os métodos dependentes da mesma classe.
      *
@@ -182,6 +184,9 @@ public class MethodExtractorV1 {
 
         // Cria uma nova classe com o mesmo nome
         ClassOrInterfaceDeclaration newClass = newCU.addClass(cls.getNameAsString());
+
+        // Copia as anotações da classe original
+        cls.getAnnotations().forEach(newClass::addAnnotation);
 
         // Copia os campos necessários
         requiredFields.forEach(newClass::addMember);
@@ -534,6 +539,7 @@ public class MethodExtractorV1 {
 
         return requiredClasses;
     }
+
     private void saveClass(String className, CompilationUnit sourceCU, Set<MethodDeclaration> dependentMethods, Set<FieldDeclaration> requiredFields) throws IOException {
         // Limpa o nome da classe
         String sanitizedClassName = sanitizeClassName(className);
@@ -576,8 +582,11 @@ public class MethodExtractorV1 {
                 classCU.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
                 classCU.getImports().forEach(newCU::addImport);
 
-                // Cria uma nova classe com o mesmo nome, extends, implements e outras palavras-chave
+                // Cria uma nova classe com o mesmo nome, extends, implements e anotações
                 ClassOrInterfaceDeclaration newClass = newCU.addClass(originalClass.getNameAsString());
+
+                // Copia as anotações da classe original
+                originalClass.getAnnotations().forEach(newClass::addAnnotation);
 
                 // Copia extends
                 if (originalClass.getExtendedTypes().isNonEmpty()) {
@@ -589,40 +598,35 @@ public class MethodExtractorV1 {
                     originalClass.getImplementedTypes().forEach(newClass::addImplementedType);
                 }
 
-                // Copia todos os campos da classe original
-                originalClass.getFields().forEach(newClass::addMember);
+                // Copia todos os campos da classe original, incluindo anotações e modificadores
+                originalClass.getFields().forEach(field -> {
+                    FieldDeclaration newField = new FieldDeclaration();
 
-                // Copia os métodos dependentes
+                    // Copia as anotações do campo
+                    field.getAnnotations().forEach(newField::addAnnotation);
+
+                    // Copia os modificadores do campo
+                    newField.setModifiers(field.getModifiers()); // Usa setModifiers
+
+                    // Copia as variáveis do campo
+                    field.getVariables().forEach(variable -> newField.addVariable(variable.clone()));
+
+                    // Adiciona o campo à nova classe
+                    newClass.addMember(newField);
+                });
+
+                // Copia os métodos dependentes, incluindo anotações e modificadores
                 for (MethodDeclaration method : dependentMethods) {
-                    newClass.addMember(method.clone());
-                }
+                    MethodDeclaration newMethod = method.clone();
 
-                // Verifica e inclui getters e setters para todos os campos
-                for (FieldDeclaration field : originalClass.getFields()) {
-                    String fieldName = field.getVariable(0).getNameAsString();
-                    String fieldType = field.getElementType().asString();
+                    // Copia as anotações do método
+                    method.getAnnotations().forEach(newMethod::addAnnotation);
 
-                    // Busca getters e setters na classe original
-                    originalClass.getMethods().forEach(method -> {
-                        String methodName = method.getNameAsString();
+                    // Copia os modificadores do método
+                    newMethod.setModifiers(method.getModifiers()); // Usa setModifiers
 
-                        // Verifica se é um getter
-                        if (methodName.equals("get" + capitalize(fieldName)) ||
-                                (fieldType.equals("boolean") && methodName.equals("is" + capitalize(fieldName)))) {
-                            if (method.getParameters().isEmpty() && method.getType().asString().equals(fieldType)) {
-                                newClass.addMember(method.clone());
-                            }
-                        }
-
-                        // Verifica se é um setter
-                        if (methodName.equals("set" + capitalize(fieldName))) {
-                            if (method.getParameters().size() == 1 &&
-                                    method.getParameters().get(0).getType().asString().equals(fieldType) &&
-                                    method.getType().asString().equals("void")) {
-                                newClass.addMember(method.clone());
-                            }
-                        }
-                    });
+                    // Adiciona o método à nova classe
+                    newClass.addMember(newMethod);
                 }
 
                 // Salva a nova CompilationUnit no diretório de destino
@@ -631,9 +635,7 @@ public class MethodExtractorV1 {
             }
         }
     }
-    private String capitalize(String str) {
-        return str.substring(0, 1).toUpperCase() + str.substring(1);
-    }
+
     /**
      * Remove caracteres inválidos do nome da classe para criar um caminho de arquivo válido.
      *
