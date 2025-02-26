@@ -3,12 +3,18 @@ package com.ifba.prodscalpel4objects.adapter;
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 /**
 * Core GP Algorithm, responsável por reduzir o código do over-organ
@@ -48,6 +54,11 @@ public class GPAlgorithm {
     * @return A new individual with the genes of the two individuals passed by parameter.
     */
    public GPIndividual crossover(GPIndividual parent1, GPIndividual parent2) {
+
+      if (parent1.getSelectedLOCs().isEmpty() || parent2.getSelectedLOCs().isEmpty()) {
+         return new GPIndividual(); // Retorna indivíduo vazio
+      }
+
       GPIndividual child = new GPIndividual();
       List<Integer> childLOCs = new ArrayList<>();
 
@@ -109,9 +120,49 @@ public class GPAlgorithm {
       // TODO: Implementar lógica para simular a compilação
       // OBS: É aqui onde será implementado o 'ice-box tests'?
 
-      JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-      int compilationResult = compiler.run(null, null, null, outputPath + "Arquivo.java a ser compilado");
-      return (compilationResult == 0);
+      // ** -------------------> CRIANDO ARQUIVO TEMPORÁRIO <-------------------------- //
+      /**
+      new File(outputPath).mkdirs();
+
+      File dummyFile = new File(outputPath + "/Dummy.java");
+      try {
+         Files.write(dummyFile.toPath(), "public class Dummy {}".getBytes());
+      } catch (IOException e) {
+         return false;
+      }
+       */
+      // ** -------------------> || <-------------------------- //
+
+      try {
+         // 1. Cria o diretório de saída
+         new File(outputPath).mkdirs();
+
+         // 2. Carrega o código original do IceBox
+         Path iceBoxPath = Paths.get("IceBox/UtilityClass_reverseString.java");
+         List<String> allLines = Files.readAllLines(iceBoxPath);
+
+         // 3. Filtra as linhas selecionadas pelo indivíduo
+         List<String> selectedLines = individual.getSelectedLOCs().stream()
+                 .map(lineNumber -> allLines.get(lineNumber - 1)) // -1 pois LOCs começam em 1
+                 .collect(Collectors.toList());
+
+         // 4. Escreve o código filtrado em um arquivo temporário
+         File tempFile = new File(outputPath + "/TransplantedUtilityClass.java");
+         Files.write(tempFile.toPath(), selectedLines);
+
+         // 5. Compila o arquivo
+         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+         int compilationResult = compiler.run(null, null, null, tempFile.getAbsolutePath());
+
+         if (selectedLines.stream().noneMatch(line -> line.contains("class UtilityClass"))) {
+            return false; // Rejeita código sem a declaração da classe
+         }
+
+         return (compilationResult == 0);
+
+      } catch (IOException e) {
+         return false;
+      }
 
    }
 
@@ -152,7 +203,7 @@ public class GPAlgorithm {
          // Tamanho do subconjunto: 50% a 100% dos LOCs
          int minSize = Math.max(1, (int) (iceBoxLOCs.size() * 0.5));
          int maxSize = iceBoxLOCs.size();
-         int subsetSize = minSize + random.nextInt(maxSize - minSize + 1);
+         int subsetSize = minSize + random.nextInt(1, maxSize - minSize + 1);
 
          // Embaralha e seleciona LOCs únicos
          List<Integer> shuffledLOCs = new ArrayList<>(iceBoxLOCs);
@@ -166,6 +217,22 @@ public class GPAlgorithm {
       }
 
       return population;
+   }
+
+   public void loadIceBoxClass(String iceBoxPath) {
+      try {
+         Path path = Paths.get(iceBoxPath);
+         List<String> lines = Files.readAllLines(path);
+
+         // Corrigindo o mapeamento de linhas
+         this.iceBoxLOCs = new ArrayList<>();
+         for (int i = 0; i < lines.size(); i++) {
+            this.iceBoxLOCs.add(i + 1); // Linhas começam em 1
+         }
+
+      } catch (IOException e) {
+         throw new RuntimeException("Falha ao carregar IceBox: " + e.getMessage());
+      }
    }
 
    // Método para carregar os LOCs
@@ -218,10 +285,14 @@ public class GPAlgorithm {
 
             // TODO: Avaliar essa parte aqui do código para adaptar para a realidade do ProdScalpel
             // Parâmetros de exemplo (ajuste conforme sua lógica real):
-            int totalIdsInHost = 100; // Total de IDs (variáveis, funções, classes) no código hospedeiro
-            int mappedIds = individual.getSelectedLOCs().size(); // Simplificação: mapeia todos os LOCs
+            //int totalIdsInHost = 100; // Total de IDs (variáveis, funções, classes) no código hospedeiro
+            int totalIdsInHost = iceBoxLOCs.size();
+           // int mappedIds = individual.getSelectedLOCs().size(); // Simplificação: mapeia todos os LOCs
+            int mappedIds = (int) individual.getSelectedLOCs().stream()
+                    .filter(line -> line <= totalIdsInHost)
+                    .count();
             int locs = individual.getSelectedLOCs().size(); // Quantidade de LOCs do indivíduo
-            String outputPath = "/outputs/simulations"; // Caminho para salvar o output das simulações
+            String outputPath = "outputs/simulations"; // Caminho para salvar o output das simulações
 
             // Calcula o fitness
             double fitness = computeFitness(individual, totalIdsInHost, mappedIds, locs, outputPath);
@@ -289,5 +360,6 @@ public class GPAlgorithm {
 
       return nextGeneration;
    }
+
 
 }

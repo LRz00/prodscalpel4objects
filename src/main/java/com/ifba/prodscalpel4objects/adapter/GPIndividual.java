@@ -1,5 +1,6 @@
 package com.ifba.prodscalpel4objects.adapter;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -19,6 +20,10 @@ public class GPIndividual {
     private double fitness;
     private GPIndividual next;
     private List<Integer> selectedLOCs;
+
+    public GPIndividual() {
+        this.selectedLOCs = new ArrayList<>();
+    }
 
     // Boilerplate code
 
