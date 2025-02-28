@@ -1,5 +1,8 @@
+// =======================> START - PACKAGE <======================= //
 package com.ifba.prodscalpel4objects.adapter;
+// =======================> END - PACKAGE <======================= //
 
+// =======================> START - IMPORTS <======================= //
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
@@ -8,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -15,36 +19,36 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
+// =======================> END - IMPORTS <======================= //
 
 /**
-* Core GP Algorithm, responsável por reduzir o código do over-organ
- * e adaptá-lo ao ambiente do host.
+ * GP Algorithm's core
  * <p>
- * Características do GP Algorithm:
- * 1. Busca Heurística: A GP explora o espaço de possíveis modificações no código do órgão para encontrar uma versão compatível com o hospedeiro.
- * 2. Otimização: Reduz o tamanho do órgão removendo código irrelevante (ex: dead code) e ajustando chamadas de função.
- * 3. Resolução de Conflitos: Adapta nomes de variáveis/funções e estruturas de dados para evitar colisões no hospedeiro.
- * 4. Eficiência: O processo é repetido por múltiplas gerações até que um indivíduo passe em todos os testes.
+ * GP Algorithm Description:
+ * 1. Heuristic search: GP explores the space of possible modifications to the organ's code to find a version that is compatible with the host.
+ * 2. Optimization: Reduces the size of the body by removing irrelevant code (e.g. dead code) and adjusting function calls.
+ * 3. Conflict Resolution: Adapts variable/function names and data structures to avoid collisions on the host.
+ * 4. Efficiency: The process is repeated for multiple generations until an individual passes all the tests.
  * <p>
 * @author Giovane Neves
 */
+// =======================> START - CLASS <======================= //
 public class GPAlgorithm {
 
+   // =======================> START - ATTRIBUTES <======================= //
    /**
-    * Define o tamanho máximo da população para 100;
-    * Foi selecionado o valor 100 para evitar o problema de 'máximo local',
-    * onde a solução é melhor que as suas vizinhas, mas não é a melhor globalmente.
+    * Sets the maximum population size to 100;
+    * INFO: The value 100 was selected to avoid the 'local maximum' problem,
+    * where a solution is better than its neighbors, but not the best overall.
     */
    private final static int POPULATION_SIZE = 100;
-
-   /**
-    * Limita o número máximo de gerações para 50
-    */
    private final static int MAX_GENERATIONS = 50;
 
 
    // Lista de LOCs do IceBox
    private List<Integer> iceBoxLOCs;
+   // =======================> END - CONSTRUCTOR <======================= //
+
 
    /**
     * Crossover between two individuals.

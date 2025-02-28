@@ -16,19 +16,15 @@ import java.util.List;
 public class GPIndividual {
 
     // =======================> START - ATTRIBUTES <======================= //
-    private int id; // Individual's unique indentifier
+    private int id; // Individual's unique identifier
     private double fitness; // Individual's fitness
     private GPIndividual next; // The next Individual
     private List<Integer> selectedLOCs; // The selected lines of code
     private List<Mapping> abstractMappings; // The Abstract Symbol Tree
-
-    // ========================================================================= //
-    // TODO: Estudar essas 4 variáveis
-    //List<String> mappedDeclarations;
-    //DeclarationSymbolTable declarationSymbolTable;
-    //List<MappingCandidate> candidateMappings
-    //List<MappingCandidate> multiPossibleMappings
-    // ========================================================================= //
+    List<String> mappedDeclarations; // Stores mapped declarations. Ex: (“Interger data -> int data”)
+    DeclarationSymbolTable declarationSymbolTable; // Trace donor declarations
+    List<MappingCandidate> candidateMappings; // Explore different combinations during evolution. EX: changing the name of a variable.
+    List<MappingCandidate> multiPossibleMappings; // Explores possibilities of using an equivalent variable on the host
 
     // =======================> END - ATTRIBUTES <======================= //
 
