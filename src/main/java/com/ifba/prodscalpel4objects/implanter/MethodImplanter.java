@@ -1,16 +1,16 @@
 package com.ifba.prodscalpel4objects.implanter;
 
+import com.github.difflib.DiffUtils;
+import com.github.difflib.patch.Patch;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
-import com.github.javaparser.ast.expr.Name;
 
 import java.io.*;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 
 /**
@@ -20,10 +20,17 @@ import java.util.*;
  */
 public class MethodImplanter {
 
-    private String hostRootPath;
-    private String receiverRootPath;
-    private List<String> pathOfFileNames = new ArrayList<>();
+    private final String hostRootPath;
+    private final String backupRootPath = "C:\\Users\\Micro\\IdeaProjects\\backupexample\\src\\main\\java\\org\\exemple\\backupexample";
+    private final String receiverRootPath;
+    private final List<String> pathOfFileNames = new ArrayList<>();
 
+    /**
+     * Construtor da classe MethodImplanter.
+     *
+     * @param hostRootPath Caminho raiz do host.
+     * @param receiverRootPath Caminho raiz do receptor.
+     */
     public MethodImplanter(String hostRootPath, String receiverRootPath) {
         this.hostRootPath = hostRootPath;
         this.receiverRootPath = receiverRootPath;
@@ -33,24 +40,91 @@ public class MethodImplanter {
      * Método principal que inicia a cópia dos arquivos Java encontrados no projeto.
      */
     public void implant() {
-        System.out.println("Começando copiar os arquivos");
-        List<File> javaFiles = findJavaFilesInProject();
-        String packageName;
+        copyFileToSp2();
+        copyFilesToReceiver();
 
-        for(File javaFile : javaFiles){
-            packageName = getPackageNameFromFile(javaFile);
-            copyJavaFile(javaFile.toString(), packageName, javaFile.getName());
-            System.out.println("Arquivo " + javaFile.getName() + " copiado.");
-        }
-
-        System.out.println("Todos os arquivos foram copiados.");
-
-        for(String path : pathOfFileNames){
+        for (String path : pathOfFileNames) {
             modifyLinesOfTheFile(path);
         }
 
         System.out.println("Todos os arquivos foram modificados.");
+    }
 
+    /**
+     * Copia os arquivos Java encontrados no host para o projeto auxiliar (backup).
+     */
+    private void copyFileToSp2() {
+        System.out.println("Começando copiar os arquivos para SP2");
+        List<File> javaFiles = findJavaFilesInProject(hostRootPath);
+        String packageName;
+
+        for (File javaFile : javaFiles) {
+            packageName = getPackageNameFromFile(javaFile);
+            System.out.println("Nome do pacote: " + packageName);
+            copyJavaFile(javaFile.toString(), packageName, javaFile.getName(), backupRootPath);
+            System.out.println("Arquivo " + javaFile.getName() + " copiado.");
+        }
+
+        System.out.println("Todos os arquivos foram copiados.");
+    }
+
+    /**
+     * Copia os arquivos Java do projeto auxiliar (backup) para o sistema receptor.
+     * Antes de copiar, verifica se há alterações no arquivo auxiliar que não estão presentes no receptor.
+     * Se houver, solicita ao usuário a confirmação para realizar o merge.
+     */
+    private void copyFilesToReceiver() {
+        System.out.println("Começando copiar os arquivos para o sistema receptor");
+        List<File> javaFiles = findJavaFilesInProject(backupRootPath);
+        String packageName;
+
+        pathOfFileNames.clear();
+
+        for (File javaFile : javaFiles) {
+            packageName = getPackageNameFromFile(javaFile);
+            String destDirPath = receiverRootPath + "\\" + packageName;
+            File destDir = new File(destDirPath);
+            if (!destDir.exists()) {
+                if (destDir.mkdirs()) {
+                    System.out.println("Pasta criada: " + destDirPath);
+                } else {
+                    System.err.println("Falha ao criar a pasta: " + destDirPath);
+                    continue;
+                }
+            }
+            String destFilePath = destDirPath + "\\" + javaFile.getName();
+            File receptorFile = new File(destFilePath);
+
+            if (receptorFile.exists()) {
+                try {
+                    List<String> auxLines = Files.readAllLines(javaFile.toPath());
+                    List<String> recLines = Files.readAllLines(receptorFile.toPath());
+
+                    Patch<String> patch = DiffUtils.diff(recLines, auxLines);
+                    if (!patch.getDeltas().isEmpty()) {
+                        System.out.println("O arquivo " + javaFile.getName() + " possui alterações entre o auxiliar e o receptor.");
+                        System.out.print("Deseja realizar merge? (s/n): ");
+                        Scanner scanner = new Scanner(System.in);
+                        String response = scanner.nextLine();
+                        if (response.equalsIgnoreCase("s")) {
+                            Files.copy(javaFile.toPath(), receptorFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                            System.out.println("Merge realizado para o arquivo " + javaFile.getName());
+                        } else {
+                            System.out.println("Merge cancelado para o arquivo " + javaFile.getName());
+                        }
+                    } else {
+                        System.out.println("Nenhuma alteração encontrada para " + javaFile.getName() + ". Copiando arquivo.");
+                        Files.copy(javaFile.toPath(), receptorFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (IOException e) {
+                    System.err.println("Erro ao processar o arquivo " + javaFile.getName() + ": " + e.getMessage());
+                }
+            } else {
+                copyJavaFile(javaFile.toString(), packageName, javaFile.getName(), receiverRootPath);
+            }
+        }
+
+        System.out.println("Processo de cópia para receptor finalizado.");
     }
 
     /**
@@ -59,8 +133,9 @@ public class MethodImplanter {
      * @param sourceFilePath Caminho do arquivo de origem.
      * @param packageName Nome do pacote do arquivo.
      * @param fileName Nome do arquivo.
+     * @param destinationFilePath Caminho do diretório de destino.
      */
-    private void copyJavaFile(String sourceFilePath, String packageName, String fileName) {
+    private void copyJavaFile(String sourceFilePath, String packageName, String fileName, String destinationFilePath) {
         File sourceFile = new File(sourceFilePath);
         if (!sourceFile.exists()) {
             System.err.println("O arquivo de origem não existe.");
@@ -68,7 +143,7 @@ public class MethodImplanter {
         }
 
         try {
-            String destinationFilePath = "C:\\Users\\Micro\\IdeaProjects\\tcc\\receiverexample\\src\\main\\java\\org\\exemple\\receiverexample\\" + packageName;
+            destinationFilePath = destinationFilePath + "\\" + packageName;
             System.out.println("Caminho: " + destinationFilePath);
 
             File folder = new File(destinationFilePath);
@@ -117,7 +192,8 @@ public class MethodImplanter {
             List<String> packageParts = new ArrayList<>();
 
             while (parent != null && !parent.getName().equals(projectName) && !parent.getName().equals("IceBox")) {
-                packageParts.add(0, parent.getName());
+                // Aqui se espera um método addFirst, verifique se a implementação da lista suporta
+                packageParts.addFirst(parent.getName());
                 parent = parent.getParentFile();
             }
 
@@ -129,20 +205,18 @@ public class MethodImplanter {
     /**
      * Encontra todos os arquivos Java válidos no projeto.
      *
+     * @param sourcePath Caminho de origem onde os arquivos Java serão procurados.
      * @return Lista de arquivos Java válidos.
      */
-    public List<File> findJavaFilesInProject() {
-        File directory = new File(hostRootPath);
+    public List<File> findJavaFilesInProject(String sourcePath) {
+        File directory = new File(sourcePath);
         List<File> allJavaFiles = cleanProject(directory);
         JavaParser parser = new JavaParser();
         List<File> validJavaFiles = new ArrayList<>();
 
         for (File javaFile : allJavaFiles) {
             try {
-                CompilationUnit cu = parser.parse(javaFile).getResult().orElse(null);
-                if (cu != null) {
-                    validJavaFiles.add(javaFile);
-                }
+                parser.parse(javaFile).getResult().ifPresent(cu -> validJavaFiles.add(javaFile));
             } catch (IOException e) {
                 System.err.println("Erro ao ler o arquivo: " + javaFile.getAbsolutePath() + " - " + e.getMessage());
             } catch (ParseProblemException e) {
@@ -217,10 +291,9 @@ public class MethodImplanter {
                         try {
                             CompilationUnit cu = parser.parse(file).getResult().orElse(null);
                             if (cu != null) {
-                                String projectName = directory.getName()
+                                return directory.getName()
                                         .toLowerCase()
                                         .replaceAll("[^a-z0-9]", "");
-                                return projectName;
                             }
                         } catch (IOException e) {
                             System.err.println("Erro ao ler o arquivo: " + file.getAbsolutePath() + " - " + e.getMessage());
@@ -238,11 +311,11 @@ public class MethodImplanter {
     }
 
     /**
-    * Busca recursivamente todos os arquivos Java válidos dentro de um diretório.
-    *
-    * @param directory Diretório raiz da busca.
-    * @return Lista de arquivos Java válidos encontrados.
-    */
+     * Busca recursivamente todos os arquivos Java válidos dentro de um diretório.
+     *
+     * @param directory Diretório raiz da busca.
+     * @return Lista de arquivos Java válidos encontrados.
+     */
     private List<File> findJavaFiles(File directory) {
         List<File> javaFiles = new ArrayList<>();
         JavaParser parser = new JavaParser();
@@ -255,10 +328,7 @@ public class MethodImplanter {
                         javaFiles.addAll(findJavaFiles(file));
                     } else if (file.getName().endsWith(".java")) {
                         try {
-                            CompilationUnit cu = parser.parse(file).getResult().orElse(null);
-                            if (cu != null) {
-                                javaFiles.add(file);
-                            }
+                            parser.parse(file).getResult().ifPresent(cu -> javaFiles.add(file));
                         } catch (IOException | ParseProblemException e) {
                             System.out.println("Erro ao analisar o arquivo: " + file.getAbsolutePath());
                         }
@@ -270,9 +340,9 @@ public class MethodImplanter {
     }
 
     /**
-     * Adiciona ou modifica a linha package.
+     * Adiciona ou modifica a linha package de um arquivo Java.
      *
-     * @param filePath o caminho de cada arquivo a ser modificado.
+     * @param filePath O caminho do arquivo a ser modificado.
      */
     public void modifyLinesOfTheFile(String filePath) {
         File file = new File(filePath);
@@ -301,9 +371,10 @@ public class MethodImplanter {
     }
 
     /**
-     * Pega o pacote de cada arquivo a partir da pasta java.
+     * Obtém o nome do pacote de um arquivo Java a partir da estrutura de diretórios, baseado na pasta "java".
      *
-     * @param file o arquivo que terá o pacote capturado.
+     * @param file O arquivo para o qual o pacote será determinado.
+     * @return O nome do pacote ou "Pasta Desconhecida" se não for possível determinar.
      */
     private String getPackageNameFromJavaFolder(File file) {
         if (file != null && file.exists()) {
@@ -311,7 +382,7 @@ public class MethodImplanter {
             StringBuilder packageParts = new StringBuilder();
 
             while (parent != null && !parent.getName().equals("java")) {
-                if (packageParts.length() > 0) {
+                if (!packageParts.isEmpty()) {
                     packageParts.insert(0, ".");
                 }
                 packageParts.insert(0, parent.getName());
