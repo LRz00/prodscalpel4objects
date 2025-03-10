@@ -21,8 +21,11 @@ public class Prodscalpel4objects {
         // Nome do método a ser extraído
         String methodName = "saveAnimal";
 
+        // Caminho do Pom do projeto original
+        String originalPomPath = "C:\\Users\\Lara.rodrigues\\Documents\\petresgate-master\\pom.xml";
+
         // Cria uma instância do extrator de métodos
-        MethodExtractorV1 methodExtractor = new MethodExtractorV1(sourceRootPath);
+        MethodExtractorV1 methodExtractor = new MethodExtractorV1(sourceRootPath, originalPomPath);
 
         // Extrai o método especificado para um novo arquivo
         methodExtractor.extract(sourceFilePath, methodName);

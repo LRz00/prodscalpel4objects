@@ -32,13 +32,15 @@ import java.util.*;
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
+    private final PomGenerator pomGenerator;
 
     /**
      * Construtor da classe MethodExtractorV1.
      *
      * @param sourceRootPath Caminho do diretório raiz do código-fonte.
      */
-    public MethodExtractorV1(String sourceRootPath) {
+    public MethodExtractorV1(String sourceRootPath,  String originalPomPath) {
+        this.pomGenerator = new PomGenerator(originalPomPath);
         this.sourceRoot = Paths.get(sourceRootPath);
     }
 
@@ -158,9 +160,41 @@ public class MethodExtractorV1 {
                     saveClass(className, cu, classDependentMethods, classRequiredFields);
                 }
             }
+            // Coleta os imports das classes extraídas
+            Set<String> imports = collectImportsFromExtractedClasses(targetDirectory);
+
+            // Gera o pom.xml no IceBox com as dependências necessárias
+            pomGenerator.generatePomInIceBox(imports);
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Coleta os imports de todas as classes extraídas no diretório IceBox.
+     *
+     * @param iceBoxPath Caminho do diretório IceBox.
+     * @return Um conjunto de imports.
+     */
+    private Set<String> collectImportsFromExtractedClasses(Path iceBoxPath) throws IOException {
+        Set<String> imports = new HashSet<>();
+        JavaParser javaParser = new JavaParser(); // Cria uma instância de JavaParser
+
+        Files.walk(iceBoxPath)
+                .filter(path -> path.toString().endsWith(".java"))
+                .forEach(path -> {
+                    try {
+                        String content = Files.readString(path);
+                        // Usa a instância de JavaParser para chamar o método parse
+                        ParseResult<CompilationUnit> parseResult = javaParser.parse(content);
+                        CompilationUnit cu = parseResult.getResult().orElseThrow();
+                        cu.getImports().forEach(importDecl -> imports.add(importDecl.getNameAsString()));
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                });
+
+        return imports;
     }
 
     /**
