@@ -20,7 +20,7 @@ public class PomGenerator {
  private final Path iceBoxPath;
  private final Path originalPomPath;
 
- public PomGenerator( String originalPomPath) {
+ public PomGenerator(String originalPomPath) {
   this.iceBoxPath = Paths.get(System.getProperty("user.dir"), "IceBox");
   this.originalPomPath = Paths.get(originalPomPath);
  }
@@ -81,14 +81,20 @@ public class PomGenerator {
   // Obtém a lista de dependências do pom.xml original
   List<Dependency> dependencies = originalModel.getDependencies();
 
+  System.out.println("Dependências no pom.xml original:");
+  dependencies.forEach(dep -> System.out.println(dep.getGroupId() + ":" + dep.getArtifactId()));
+
   // Para cada import, verifica se ele corresponde a uma dependência
   for (String importLine : imports) {
-   // Extrai o grupo da importação (ex: "org.apache.maven" de "org.apache.maven.model.Dependency")
+   // Extrai o grupo da importação
    String importGroup = extractGroupFromImport(importLine);
+   System.out.println("Import analisado: " + importLine + " -> Grupo: " + importGroup);
 
    // Procura a dependência correspondente no pom.xml original
    for (Dependency dependency : dependencies) {
-    if (dependency.getGroupId().equals(importGroup)) {
+    // Verifica se o groupId ou artifactId contém a string do import
+    if (dependency.getGroupId().contains(importGroup) || dependency.getArtifactId().contains(importGroup)) {
+     System.out.println("Dependência correspondente encontrada: " + dependency.getGroupId() + ":" + dependency.getArtifactId());
      requiredDependencies.add(dependency);
      break; // Adiciona a dependência e passa para o próximo import
     }
