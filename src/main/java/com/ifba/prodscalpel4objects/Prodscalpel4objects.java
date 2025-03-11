@@ -13,7 +13,7 @@ import com.ifba.prodscalpel4objects.extractor.MethodExtractorV1;
 public class Prodscalpel4objects {
 
     public static void main(String[] args) {
-        String sourceRootPath = "C:\\Users\\Lara.rodrigues\\Documents\\petresgate-master\\src\\main\\java";
+   String sourceRootPath = "C:\\Users\\Lara.rodrigues\\Documents\\petresgate-master\\src\\main\\java";
 
         // Caminho completo para o arquivo-fonte que contém o método processData
         String sourceFilePath = "C:\\Users\\Lara.rodrigues\\Documents\\petresgate-master\\src\\main\\java\\br\\com\\ifba\\petresgate\\service\\AnimalService.java";
