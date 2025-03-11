@@ -86,17 +86,19 @@ public class PomGenerator {
 
   // Para cada import, verifica se ele corresponde a uma dependência
   for (String importLine : imports) {
-   // Extrai o grupo da importação
+   // Extrai o grupo da importação (ex: "org.springframework.mail" de "org.springframework.mail.SimpleMailMessage")
    String importGroup = extractGroupFromImport(importLine);
    System.out.println("Import analisado: " + importLine + " -> Grupo: " + importGroup);
 
+   // Divide o grupo do import em palavras
+   String[] importWords = importGroup.split("\\.");
+
    // Procura a dependência correspondente no pom.xml original
    for (Dependency dependency : dependencies) {
-    // Verifica se o groupId ou artifactId contém a string do import
-    if (dependency.getGroupId().contains(importGroup) || dependency.getArtifactId().contains(importGroup)) {
+    // Verifica se o groupId ou artifactId tem pelo menos 3 palavras em comum com o import
+    if (hasAtLeastThreeCommonWords(importWords, dependency.getGroupId(), dependency.getArtifactId())) {
      System.out.println("Dependência correspondente encontrada: " + dependency.getGroupId() + ":" + dependency.getArtifactId());
      requiredDependencies.add(dependency);
-     break; // Adiciona a dependência e passa para o próximo import
     }
    }
   }
@@ -104,6 +106,33 @@ public class PomGenerator {
   return requiredDependencies;
  }
 
+ private boolean hasAtLeastThreeCommonWords(String[] importWords, String groupId, String artifactId) {
+  // Divide o groupId e o artifactId em palavras
+  String[] groupIdWords = groupId.split("\\.");
+  String[] artifactIdWords = artifactId.split("\\.");
+
+  // Conta quantas palavras do import estão no groupId
+  int commonInGroupId = countCommonWords(importWords, groupIdWords);
+
+  // Conta quantas palavras do import estão no artifactId
+  int commonInArtifactId = countCommonWords(importWords, artifactIdWords);
+
+  // Retorna true se houver pelo menos 3 palavras em comum
+  return (commonInGroupId >= 2) || (commonInArtifactId >= 1);
+ }
+
+ private int countCommonWords(String[] words1, String[] words2) {
+  int commonCount = 0;
+  for (String word1 : words1) {
+   for (String word2 : words2) {
+    if (word1.equals(word2)) {
+     commonCount++;
+     break; // Para evitar contar a mesma palavra mais de uma vez
+    }
+   }
+  }
+  return commonCount;
+ }
  /**
   * Extrai o grupo de uma importação.
   *
