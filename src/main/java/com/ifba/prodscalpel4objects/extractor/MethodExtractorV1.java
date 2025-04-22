@@ -704,4 +704,21 @@ public class MethodExtractorV1 {
 
         return requiredFields;
     }
+
+    public void extractCallPath(String methodName, List<String> parameterTypes, Path outputDir) {
+        try {
+            VeinFinder veinFinder = new VeinFinder(
+                    sourceRoot,
+                    methodName,
+                    parameterTypes
+            );
+
+            veinFinder.extractCallPaths();
+            veinFinder.saveExtractedCode(outputDir);
+
+            System.out.println("Caminho de chamada extraído para: " + outputDir);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 }
