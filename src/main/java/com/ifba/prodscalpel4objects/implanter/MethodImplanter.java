@@ -650,44 +650,36 @@ public class MethodImplanter {
      * @param pathOfFileNamesDonor  Lista de caminhos absolutos dos arquivos do projeto doador.
      */
     public void modifyFile(List<String> pathOfFileNames, List<String> pathOfFileNamesDonor) {
+        JavaParser javaParser = new JavaParser();
 
-        // Verifica se as listas têm o mesmo tamanho
-        if (pathOfFileNames.size() != pathOfFileNamesDonor.size()) {
-            System.err.println("As listas de arquivos do receptor e doador devem ter o mesmo tamanho.");
-            return;
-        }
+        for (String donorPath : pathOfFileNamesDonor) {
+            File donorFile = new File(donorPath);
+            String donorFileName = donorFile.getName(); // Ex: UserService.java
 
-        JavaParser javaParser = new JavaParser(); // Parser compartilhado para todos os arquivos
+            // Para cada receptor que corresponde ao nome do doador
+            for (String receptorPath : pathOfFileNames) {
+                File receptorFile = new File(receptorPath);
 
-        // Itera sobre os pares receptor-doador
-        for (int i = 0; i < pathOfFileNames.size(); i++) {
-            String receptorPath = pathOfFileNames.get(i);
-            String donorPath = pathOfFileNamesDonor.get(i);
-
-            File receptorFile = new File(receptorPath); // Arquivo receptor
-            File donorFile = new File(donorPath);       // Arquivo doador
-
-            try {
-                // Faz o parse do arquivo receptor e obtém sua unidade de compilação
-                CompilationUnit cu = javaParser.parse(receptorFile)
-                        .getResult()
-                        .orElseThrow(() -> new IOException("Erro ao analisar o arquivo receptor: " + receptorPath));
-
-                // Ajusta a declaração de package com base na estrutura do receptor
-                modifyPackageDeclaration(cu, receptorFile);
-
-                // Corrige os imports que ainda apontam para o pacote do doador
-                modifyImports(cu, receptorFile, donorFile);
-
-                // Salva o conteúdo modificado de volta no arquivo receptor
-                try (FileOutputStream fos = new FileOutputStream(receptorFile)) {
-                    fos.write(cu.toString().getBytes());
+                if (!receptorFile.getName().equals(donorFileName)) {
+                    continue; // Pula se não for o mesmo nome de arquivo
                 }
 
-                System.out.println("Arquivo atualizado com sucesso: " + receptorPath);
+                try {
+                    CompilationUnit cu = javaParser.parse(receptorFile)
+                            .getResult()
+                            .orElseThrow(() -> new IOException("Erro ao analisar o arquivo receptor: " + receptorPath));
 
-            } catch (IOException e) {
-                System.err.println("Erro ao processar o arquivo " + receptorPath + ": " + e.getMessage());
+                    modifyPackageDeclaration(cu, receptorFile);
+                    modifyImports(cu, receptorFile, donorFile);
+
+                    try (FileOutputStream fos = new FileOutputStream(receptorFile)) {
+                        fos.write(cu.toString().getBytes());
+                    }
+
+                    System.out.println("Arquivo atualizado com sucesso: " + receptorPath);
+                } catch (IOException e) {
+                    System.err.println("Erro ao processar o arquivo " + receptorPath + ": " + e.getMessage());
+                }
             }
         }
     }
