@@ -170,14 +170,6 @@ public class GPAlgorithm {
 
    }
 
-   /*public void computeFitnessForSubset(List<GPIndividual> individualsSubset, SymbolTable hostSymbolTable,
-                                       List<String> skeletonSourceCode, List<String> skeletonLOCsArray, String graftInterfaceTempOutput,
-                                       String interfaceHeaderWithGlobalDecl, int totalIdsInHostSymbolTable, List<DependencyList> listOfDependenciesForStatements,
-                                       String skeletonInterfaceSourceCodeOutput, List<DependencyListWithID> dependencyListForAbstract,
-                                       String finalInterfaceHeaderForCompilation, String txlTemporaryFolder){
-      throw new UnsupportedOperationException("Not supported yet.");
-   }*/
-
    /**
     * Gera a população inicial a partir do código extraído para a IceBox.
     *
