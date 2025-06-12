@@ -5,7 +5,12 @@ import com.github.difflib.patch.Patch;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.Modifier;
+import com.github.javaparser.ast.NodeList;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.VariableDeclarator;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -23,7 +28,6 @@ public class MethodImplanter {
     private final Set<String> rootPathOfReceptors = new HashSet<>();
     private final List<String> pathOfFileNames = new ArrayList<>();
     private final List<String> pathOfFileNamesDonor = new ArrayList<>();
-    private final Map<String,String> pathOfFileNamesMap = new LinkedHashMap<>();
 
     /**
      * Construtor da classe MethodImplanter.
@@ -72,6 +76,264 @@ public class MethodImplanter {
         }
     }
 
+    private void handleExistingFile(File donorFile, File receptorFile, String receptorRoot) {
+        Map<String, String> donorMap;
+        Map<String, String> receptorMap;
+
+        try {
+            donorMap    = extractMethodsMap(donorFile);
+            receptorMap = extractMethodsMap(receptorFile);
+        } catch (IOException e) {
+            System.err.println("Erro ao extrair métodos de '"
+                    + donorFile.getName() + "' ou '"
+                    + receptorFile.getName() + "': " + e.getMessage());
+            return;
+        }
+
+        // --- EXTRAIR FIELDS ---
+        Map<String, FieldDeclaration> donorFields;
+        Map<String, FieldDeclaration> receptorFields;
+        try {
+            donorFields    = extractFieldsMap(donorFile);
+            receptorFields = extractFieldsMap(receptorFile);
+        } catch (IOException e) {
+            System.err.println("Erro ao extrair atributos de '"
+                    + donorFile.getName() + "' ou '"
+                    + receptorFile.getName() + "': " + e.getMessage());
+            // prossegue só com métodos
+            donorFields = Collections.emptyMap();
+            receptorFields = Collections.emptyMap();
+        }
+
+        // 0) Processa atributos novos ou conflitos
+        processNewFields(donorFields, receptorFields, donorFile, receptorFile, receptorRoot);
+
+        // 1) Trata métodos novos no receptor
+        processNewMethods(donorMap.keySet(), receptorMap.keySet(), donorFile, receptorFile, receptorRoot);
+
+        // 2) Continua com o fluxo de merge de métodos existentes
+        for (String sig : donorMap.keySet()) {
+            if (!receptorMap.containsKey(sig)) continue;
+            processPotentialMerge(
+                    sig,
+                    donorMap.get(sig),
+                    receptorMap.get(sig),
+                    donorFile,
+                    receptorFile,
+                    receptorRoot
+            );
+        }
+    }
+
+    /**
+     * Extrai todos os campos (FieldDeclaration) de um arquivo Java,
+     * retornando um mapa nomeVariavel → FieldDeclaration original.
+     * Se uma FieldDeclaration declara múltiplas variáveis, cada variável é mapeada separadamente.
+     *
+     * @param file Arquivo Java a ser analisado.
+     * @return Map onde a chave é o nome da variável e o valor é o FieldDeclaration completo.
+     * @throws IOException se ocorrer erro de leitura/parse.
+     */
+    private Map<String, FieldDeclaration> extractFieldsMap(File file) throws IOException {
+        Map<String, FieldDeclaration> fieldsMap = new LinkedHashMap<>();
+        JavaParser parser = new JavaParser();
+        CompilationUnit cu = parser.parse(file).getResult()
+                .orElseThrow(() -> new IOException("Não foi possível parsear " + file.getName()));
+
+        cu.findAll(FieldDeclaration.class).forEach(fd -> {
+            for (VariableDeclarator var : fd.getVariables()) {
+                String name = var.getNameAsString();
+                // Em caso de múltiplas declarações no mesmo FieldDeclaration, mapeamos cada uma
+                fieldsMap.put(name, fd);
+            }
+        });
+
+        return fieldsMap;
+    }
+
+    /**
+     * Identifica campos novos no doador e conflitos de campos (mesmo nome, mas tipo ou modificadores diferentes)
+     * e pergunta ao usuário se deseja adicioná-los/substituí-los.
+     *
+     * @param donorFields    mapa nomeVariavel → FieldDeclaration no doador
+     * @param receptorFields mapa nomeVariavel → FieldDeclaration no receptor
+     * @param donorFile      arquivo doador
+     * @param receptorFile   arquivo receptor
+     * @param receptorRoot   raiz do sistema receptor (para exibir no output)
+     */
+    private void processNewFields(Map<String, FieldDeclaration> donorFields,
+                                  Map<String, FieldDeclaration> receptorFields,
+                                  File donorFile,
+                                  File receptorFile,
+                                  String receptorRoot) {
+        Scanner sc = new Scanner(System.in);
+
+        for (Map.Entry<String, FieldDeclaration> entry : donorFields.entrySet()) {
+            String name = entry.getKey();
+            FieldDeclaration donorFd = entry.getValue();
+
+            if (!receptorFields.containsKey(name)) {
+                // campo novo
+                System.out.println("Atributo novo encontrado: '" + name + "'");
+                System.out.print("Deseja adicionar este atributo ao receptor? (s/n): ");
+                if (sc.nextLine().equalsIgnoreCase("s")) {
+                    addSingleField(donorFile, receptorFile, name);
+                    pathOfFileNames.add(receptorFile.getAbsolutePath());
+                    System.out.println("Atributo '" + name + "' adicionado a " + receptorRoot);
+                } else {
+                    System.out.println("Adição cancelada para atributo '" + name + "'.");
+                }
+            } else {
+                // já existe no receptor: checar tipo/modificadores/initializer diferentes?
+                FieldDeclaration receptorFd = receptorFields.get(name);
+                boolean diff = isFieldDifferent(donorFd, receptorFd);
+                if (diff) {
+                    System.out.println("Conflito de atributo para '" + name + "' em " + receptorRoot);
+                    System.out.println("Doador:   " + donorFd.toString().trim());
+                    System.out.println("Receptor: " + receptorFd.toString().trim());
+                    System.out.print("Deseja substituir o atributo existente pelo do doador? (s/n): ");
+                    if (sc.nextLine().equalsIgnoreCase("s")) {
+                        replaceSingleField(donorFile, receptorFile, name);
+                        pathOfFileNames.add(receptorFile.getAbsolutePath());
+                        System.out.println("Atributo '" + name + "' substituído em " + receptorRoot);
+                    } else {
+                        System.out.println("Substituição cancelada para atributo '" + name + "'.");
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Verifica se dois FieldDeclaration (para a mesma variável) diferem em tipo, modificadores ou inicializador.
+     * Retorna true se houver diferença relevante.
+     */
+    private boolean isFieldDifferent(FieldDeclaration donorFd, FieldDeclaration receptorFd) {
+        // Se o tipo ou modificadores ou inicializador diferem, consideramos diferente.
+        // Para encontrar a VariableDeclarator correspondente (mesmo nome), buscamos em cada FD.
+        VariableDeclarator donorVar = donorFd.getVariables().stream().findFirst().orElse(null);
+        VariableDeclarator receptorVar = receptorFd.getVariables().stream().findFirst().orElse(null);
+        if (donorVar == null || receptorVar == null) return true;
+
+        // Tipo diferente?
+        String donorType = donorVar.getType().toString();
+        String receptorType = receptorVar.getType().toString();
+        if (!donorType.equals(receptorType)) return true;
+
+        // Modificadores diferentes?
+        NodeList<Modifier> modDonor = donorFd.getModifiers();
+        NodeList<Modifier> modRec  = receptorFd.getModifiers();
+        if (!new HashSet<>(modDonor).equals(new HashSet<>(modRec))) return true;
+
+        // Inicializador: se um tem e outro não, ou ambos têm mas texto diferente
+        if (donorVar.getInitializer().isPresent() ^ receptorVar.getInitializer().isPresent()) {
+            return true;
+        }
+        if (donorVar.getInitializer().isPresent() && receptorVar.getInitializer().isPresent()) {
+            String initDonor = donorVar.getInitializer().get().toString();
+            String initRec   = receptorVar.getInitializer().get().toString();
+            if (!initDonor.equals(initRec)) return true;
+        }
+
+        return false; // se chegou aqui, consideramos iguais
+    }
+
+    /**
+     * Encontra em um arquivo Java do doador o FieldDeclaration contendo a variável com o nome dado.
+     * @param donorFile  arquivo do doador
+     * @param name       nome da variável
+     * @return FieldDeclaration original (pode declarar múltiplas variáveis)
+     * @throws IOException em caso de falha no parse
+     */
+    private FieldDeclaration findFieldByName(File donorFile, String name) throws IOException {
+        JavaParser parser = new JavaParser();
+        CompilationUnit cu = parser.parse(donorFile).getResult()
+                .orElseThrow(() -> new IOException("Erro ao parsear " + donorFile.getName()));
+
+        for (FieldDeclaration fd : cu.findAll(FieldDeclaration.class)) {
+            for (VariableDeclarator var : fd.getVariables()) {
+                if (var.getNameAsString().equals(name)) {
+                    return fd;
+                }
+            }
+        }
+        throw new RuntimeException("Atributo '" + name + "' não encontrado em " + donorFile.getName());
+    }
+
+    /**
+     * Adiciona ao receptor o atributo (FieldDeclaration) do doador, preservando apenas a variável com o nome dado.
+     * @param donorFile     arquivo do doador
+     * @param receptorFile  arquivo do receptor
+     * @param name          nome da variável a adicionar
+     */
+    private void addSingleField(File donorFile, File receptorFile, String name) {
+        try {
+            FieldDeclaration donorFd = findFieldByName(donorFile, name);
+            // Clonar e remover variáveis extras, mantendo só a que desejamos
+            FieldDeclaration toInsert = donorFd.clone();
+            toInsert.getVariables().removeIf(var -> !var.getNameAsString().equals(name));
+
+            JavaParser parser = new JavaParser();
+            CompilationUnit cu = parser.parse(receptorFile).getResult()
+                    .orElseThrow(() -> new IOException("Erro ao parsear receptor"));
+
+            cu.findFirst(ClassOrInterfaceDeclaration.class).ifPresent(clazz -> {
+                // Insere o campo. Pode-se ajustar posição conforme preferência,
+                // aqui adiciona no final dos membros de classe.
+                clazz.addMember(toInsert);
+            });
+
+            // Grava o receptor atualizado
+            try (FileOutputStream fos = new FileOutputStream(receptorFile)) {
+                fos.write(cu.toString().getBytes());
+            }
+        } catch (IOException | ParseProblemException e) {
+            System.err.println("Falha ao adicionar atributo '" + name + "': " + e.getMessage());
+        }
+    }
+
+    /**
+     * Substitui no receptor o atributo existente pelo doador: remove o FieldDeclaration atual e insere o novo.
+     * @param donorFile     arquivo do doador
+     * @param receptorFile  arquivo do receptor
+     * @param name          nome da variável a substituir
+     */
+    private void replaceSingleField(File donorFile, File receptorFile, String name) {
+        try {
+            FieldDeclaration donorFd = findFieldByName(donorFile, name);
+            FieldDeclaration toInsert = donorFd.clone();
+            toInsert.getVariables().removeIf(var -> !var.getNameAsString().equals(name));
+
+            JavaParser parser = new JavaParser();
+            CompilationUnit cu = parser.parse(receptorFile).getResult()
+                    .orElseThrow(() -> new IOException("Erro ao parsear receptor"));
+
+            cu.findAll(FieldDeclaration.class).stream()
+                    .filter(fd -> fd.getVariables().stream()
+                            .anyMatch(var -> var.getNameAsString().equals(name)))
+                    .findFirst()
+                    .ifPresent(existingFd -> {
+                        // Se a declaração tiver múltiplas variáveis, removemos apenas a variável em questão
+                        if (existingFd.getVariables().size() > 1) {
+                            existingFd.getVariables().removeIf(var -> var.getNameAsString().equals(name));
+                            // Em seguida, adicionamos o novo FieldDeclaration separado
+                            cu.findFirst(ClassOrInterfaceDeclaration.class)
+                                    .ifPresent(clazz -> clazz.addMember(toInsert));
+                        } else {
+                            // Se for única, substitui todo o FieldDeclaration
+                            existingFd.replace(toInsert);
+                        }
+                    });
+
+            // Grava o receptor atualizado
+            try (FileOutputStream fos = new FileOutputStream(receptorFile)) {
+                fos.write(cu.toString().getBytes());
+            }
+        } catch (IOException | ParseProblemException e) {
+            System.err.println("Falha ao substituir atributo '" + name + "': " + e.getMessage());
+        }
+    }
+
     /**
      * Para um arquivo do doador e um receptor específico,
      * decide se deve copiar o arquivo todo ou apenas processar merge de métodos.
@@ -104,37 +366,6 @@ public class MethodImplanter {
         File destDir = new File(destDirPath);
         if (!destDir.exists()) destDir.mkdirs();
         return new File(destDir, donorFile.getName());
-    }
-
-    private void handleExistingFile(File donorFile, File receptorFile, String receptorRoot) {
-        Map<String, String> donorMap;
-        Map<String, String> receptorMap;
-
-        try {
-            donorMap    = extractMethodsMap(donorFile);
-            receptorMap = extractMethodsMap(receptorFile);
-        } catch (IOException e) {
-            System.err.println("Erro ao extrair métodos de '"
-                    + donorFile.getName() + "' ou '"
-                    + receptorFile.getName() + "': " + e.getMessage());
-            return;
-        }
-
-        // 1) Trata métodos novos no receptor
-        processNewMethods(donorMap.keySet(), receptorMap.keySet(), donorFile, receptorFile, receptorRoot);
-
-        // 2) Continua com o fluxo de merge de métodos existentes
-        for (String sig : donorMap.keySet()) {
-            if (!receptorMap.containsKey(sig)) continue;
-            processPotentialMerge(
-                    sig,
-                    donorMap.get(sig),
-                    receptorMap.get(sig),
-                    donorFile,
-                    receptorFile,
-                    receptorRoot
-            );
-        }
     }
 
     /**
