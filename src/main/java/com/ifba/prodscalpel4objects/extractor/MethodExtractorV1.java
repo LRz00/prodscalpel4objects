@@ -22,13 +22,12 @@ import java.nio.file.Paths;
 import java.util.*;
 
 /**
- * Classe responsável por extrair um método e suas dependências para um novo arquivo.
- * Agora com suporte para dependências em classes de outros pacotes.
+ * Classe responsável por extrair um método e suas dependências para um novo
+ * arquivo.
  *
- * @author lara
+ * @author Lara Rodrigues
  */
 
-// TODO: -Class annotations are not being preserved in extracted code.
 public class MethodExtractorV1 {
 
     private final Path sourceRoot;
@@ -39,7 +38,7 @@ public class MethodExtractorV1 {
      *
      * @param sourceRootPath Caminho do diretório raiz do código-fonte.
      */
-    public MethodExtractorV1(String sourceRootPath,  String originalPomPath) {
+    public MethodExtractorV1(String sourceRootPath, String originalPomPath) {
         this.pomGenerator = new PomGenerator(originalPomPath);
         this.sourceRoot = Paths.get(sourceRootPath);
     }
@@ -83,7 +82,8 @@ public class MethodExtractorV1 {
                 return;
             }
 
-            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu, Paths.get(sourceFilePath).getParent());
+            Set<MethodDeclaration> dependentMethods = findAllDependentMethods(method, sourceClass, cu,
+                    Paths.get(sourceFilePath).getParent());
             Set<FieldDeclaration> requiredFields = findRequiredFields(method, dependentMethods, sourceClass);
 
             // Separa os métodos dependentes em duas categorias:
@@ -93,8 +93,10 @@ public class MethodExtractorV1 {
             Set<MethodDeclaration> externalMethods = new HashSet<>();
 
             for (MethodDeclaration depMethod : dependentMethods) {
-                Optional<ClassOrInterfaceDeclaration> parentClassOpt = depMethod.findAncestor(ClassOrInterfaceDeclaration.class);
-                if (parentClassOpt.isPresent() && parentClassOpt.get().getNameAsString().equals(sourceClass.getNameAsString())) {
+                Optional<ClassOrInterfaceDeclaration> parentClassOpt = depMethod
+                        .findAncestor(ClassOrInterfaceDeclaration.class);
+                if (parentClassOpt.isPresent()
+                        && parentClassOpt.get().getNameAsString().equals(sourceClass.getNameAsString())) {
                     sameClassMethods.add(depMethod); // Método da mesma classe
                 } else {
                     externalMethods.add(depMethod); // Método de outra classe
@@ -111,7 +113,7 @@ public class MethodExtractorV1 {
 
             // Salva classes dependentes
             Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
-// No método extract, substitua a chamada para saveClass:
+            // No método extract, substitua a chamada para saveClass:
             for (String className : requiredClasses) {
                 // Verifica se a classe atual é a classe fonte
                 if (className.equals(sourceClass.getNameAsString())) {
@@ -133,21 +135,25 @@ public class MethodExtractorV1 {
                                 ParseResult<CompilationUnit> parseResult = exJavaParser.parse(classFilePath);
                                 if (parseResult.getResult().isPresent()) {
                                     CompilationUnit classCU = parseResult.getResult().get();
-                                    Optional<ClassOrInterfaceDeclaration> classOpt = classCU.findFirst(ClassOrInterfaceDeclaration.class);
+                                    Optional<ClassOrInterfaceDeclaration> classOpt = classCU
+                                            .findFirst(ClassOrInterfaceDeclaration.class);
 
                                     if (classOpt.isPresent()) {
                                         ClassOrInterfaceDeclaration externalClass = classOpt.get();
 
                                         // Encontra os métodos dependentes na classe externa
                                         for (MethodDeclaration externalMethod : externalMethods) {
-                                            Optional<ClassOrInterfaceDeclaration> parentClassOpt = externalMethod.findAncestor(ClassOrInterfaceDeclaration.class);
-                                            if (parentClassOpt.isPresent() && parentClassOpt.get().getNameAsString().equals(className)) {
+                                            Optional<ClassOrInterfaceDeclaration> parentClassOpt = externalMethod
+                                                    .findAncestor(ClassOrInterfaceDeclaration.class);
+                                            if (parentClassOpt.isPresent()
+                                                    && parentClassOpt.get().getNameAsString().equals(className)) {
                                                 classDependentMethods.add(externalMethod);
                                             }
                                         }
 
                                         // Encontra os campos dependentes na classe externa
-                                        classRequiredFields.addAll(findRequiredFieldsForExternalClass(externalClass, classDependentMethods));
+                                        classRequiredFields.addAll(findRequiredFieldsForExternalClass(externalClass,
+                                                classDependentMethods));
                                     }
                                 }
                             } catch (IOException e) {
@@ -165,6 +171,7 @@ public class MethodExtractorV1 {
 
             // Gera o pom.xml no IceBox com as dependências necessárias
             pomGenerator.generatePomInIceBox(imports);
+            
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -198,7 +205,8 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Salva o arquivo da classe extraída, contendo o método principal e os métodos dependentes da mesma classe.
+     * Salva o arquivo da classe extraída, contendo o método principal e os métodos
+     * dependentes da mesma classe.
      *
      * @param cu               A unidade de compilação da classe.
      * @param cls              A classe a ser salva.
@@ -209,8 +217,8 @@ public class MethodExtractorV1 {
      * @throws IOException Caso ocorra um erro ao escrever o arquivo.
      */
     private void saveClassFile(CompilationUnit cu, ClassOrInterfaceDeclaration cls, Path targetDirectory,
-                               MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
-                               Set<FieldDeclaration> requiredFields) throws IOException {
+            MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
+            Set<FieldDeclaration> requiredFields) throws IOException {
         // Cria uma nova CompilationUnit com o mesmo pacote e imports
         CompilationUnit newCU = new CompilationUnit();
         cu.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
@@ -249,11 +257,13 @@ public class MethodExtractorV1 {
      */
     private void saveExternalMethod(MethodDeclaration method, CompilationUnit sourceCU) throws IOException {
         Optional<ClassOrInterfaceDeclaration> parentClassOpt = method.findAncestor(ClassOrInterfaceDeclaration.class);
-        if (parentClassOpt.isEmpty()) return;
+        if (parentClassOpt.isEmpty())
+            return;
 
         ClassOrInterfaceDeclaration parentClass = parentClassOpt.get();
         Optional<String> importPath = findImportPath(parentClass.getNameAsString(), sourceCU);
-        if (importPath.isEmpty()) return;
+        if (importPath.isEmpty())
+            return;
 
         // Remove o nome da classe do importPath (corta até o último ponto final)
         String packagePath = importPath.get();
@@ -280,7 +290,8 @@ public class MethodExtractorV1 {
 
             if (parseResult.getResult().isPresent()) {
                 methodCU = parseResult.getResult().get();
-                Optional<ClassOrInterfaceDeclaration> existingClassOpt = methodCU.findFirst(ClassOrInterfaceDeclaration.class);
+                Optional<ClassOrInterfaceDeclaration> existingClassOpt = methodCU
+                        .findFirst(ClassOrInterfaceDeclaration.class);
 
                 if (existingClassOpt.isPresent()) {
                     newClass = existingClassOpt.get();
@@ -311,6 +322,7 @@ public class MethodExtractorV1 {
             System.out.println("Método salvo em: " + classFilePath);
         }
     }
+
     /**
      * Encontra o caminho de importação de uma classe, se ela existir no código.
      * Agora com suporte para importações com *.
@@ -336,7 +348,8 @@ public class MethodExtractorV1 {
         // Verifica importações com *
         Optional<String> wildcardImport = sourceCU.getImports().stream()
                 .filter(importDecl -> importDecl.isAsterisk()) // Verifica se é uma importação com *
-                .map(importDecl -> importDecl.getName().toString() + "." + sanitizedClassName) // Constrói o caminho completo
+                .map(importDecl -> importDecl.getName().toString() + "." + sanitizedClassName) // Constrói o caminho
+                                                                                               // completo
                 .filter(importedClass -> {
                     // Verifica se o arquivo da classe existe no pacote
                     Path classFilePath = sourceRoot.resolve(importedClass.replace(".", "/") + ".java");
@@ -352,7 +365,8 @@ public class MethodExtractorV1 {
         Optional<String> packageName = sourceCU.getPackageDeclaration().map(pd -> pd.getNameAsString());
         if (packageName.isPresent()) {
             String samePackageClass = packageName.get() + "." + sanitizedClassName;
-            Path samePackagePath = sourceRoot.resolve(packageName.get().replace(".", "/") + "/" + sanitizedClassName + ".java");
+            Path samePackagePath = sourceRoot
+                    .resolve(packageName.get().replace(".", "/") + "/" + sanitizedClassName + ".java");
             if (Files.exists(samePackagePath)) {
                 return Optional.of(samePackageClass);
             }
@@ -370,16 +384,17 @@ public class MethodExtractorV1 {
     /**
      * Encontra todos os métodos dependentes do método fornecido.
      *
-     * @param method      O método principal para o qual as dependências devem ser encontradas.
+     * @param method      O método principal para o qual as dependências devem ser
+     *                    encontradas.
      * @param sourceClass A classe onde os métodos são definidos.
      * @param sourceCU    A unidade de compilação do código-fonte.
      * @param sourceRoot  O diretório raiz do código-fonte.
      * @return Um conjunto de métodos dependentes.
      */
     private Set<MethodDeclaration> findAllDependentMethods(MethodDeclaration method,
-                                                           ClassOrInterfaceDeclaration sourceClass,
-                                                           CompilationUnit sourceCU,
-                                                           Path sourceRoot) {
+            ClassOrInterfaceDeclaration sourceClass,
+            CompilationUnit sourceCU,
+            Path sourceRoot) {
         Set<MethodDeclaration> allDependentMethods = new HashSet<>();
         Set<MethodDeclaration> processedMethods = new HashSet<>();
         Set<MethodDeclaration> methodsToProcess = new HashSet<>();
@@ -389,7 +404,8 @@ public class MethodExtractorV1 {
             MethodDeclaration currentMethod = methodsToProcess.iterator().next();
             methodsToProcess.remove(currentMethod);
 
-            if (processedMethods.contains(currentMethod)) continue;
+            if (processedMethods.contains(currentMethod))
+                continue;
             processedMethods.add(currentMethod);
 
             List<MethodCallExpr> methodCalls = currentMethod.findAll(MethodCallExpr.class);
@@ -427,7 +443,8 @@ public class MethodExtractorV1 {
                                 CompilationUnit classCU = parseResult.getResult().get();
                                 classCU.findFirst(ClassOrInterfaceDeclaration.class)
                                         .ifPresent(classDecl -> {
-                                            System.out.println("Classe dependente encontrada: " + classDecl.getNameAsString());
+                                            System.out.println(
+                                                    "Classe dependente encontrada: " + classDecl.getNameAsString());
                                         });
                             }
                         } catch (IOException e) {
@@ -450,7 +467,8 @@ public class MethodExtractorV1 {
     private Optional<MethodDeclaration> findExternalMethod(MethodCallExpr call, CompilationUnit sourceCU) {
         try {
             String scopeName = call.getScope().map(Object::toString).orElse("");
-            if (scopeName.isEmpty()) return Optional.empty();
+            if (scopeName.isEmpty())
+                return Optional.empty();
 
             Optional<String> className = sourceCU.findAll(FieldDeclaration.class).stream()
                     .filter(field -> field.getVariables().stream()
@@ -458,12 +476,15 @@ public class MethodExtractorV1 {
                     .map(field -> field.getElementType().asString())
                     .findFirst();
 
-            if (className.isEmpty()) return Optional.empty();
+            if (className.isEmpty())
+                return Optional.empty();
             Optional<String> importPath = findImportPath(className.get(), sourceCU);
-            if (importPath.isEmpty()) return Optional.empty();
+            if (importPath.isEmpty())
+                return Optional.empty();
 
             Path classFilePath = sourceRoot.resolve(importPath.get().replace(".", "/") + ".java");
-            if (!Files.exists(classFilePath)) return Optional.empty();
+            if (!Files.exists(classFilePath))
+                return Optional.empty();
 
             JavaParser javaParser = new JavaParser();
             ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
@@ -478,15 +499,17 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Encontra todos os atributos da classe que são usados diretamente pelos métodos fornecidos.
+     * Encontra todos os atributos da classe que são usados diretamente pelos
+     * métodos fornecidos.
      *
      * @param mainMethod       O método principal.
      * @param dependentMethods Métodos dependentes.
      * @param sourceClass      A classe onde os campos são definidos.
      * @return Um conjunto de campos necessários.
      */
-    private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod, Set<MethodDeclaration> dependentMethods,
-                                                     ClassOrInterfaceDeclaration sourceClass) {
+    private Set<FieldDeclaration> findRequiredFields(MethodDeclaration mainMethod,
+            Set<MethodDeclaration> dependentMethods,
+            ClassOrInterfaceDeclaration sourceClass) {
         Set<FieldDeclaration> requiredFields = new HashSet<>();
 
         List<MethodDeclaration> allMethods = new ArrayList<>(dependentMethods);
@@ -524,14 +547,16 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Encontra classes necessárias para a execução do método, incluindo tipos de retorno, parâmetros, campos e dependências injetadas.
+     * Encontra classes necessárias para a execução do método, incluindo tipos de
+     * retorno, parâmetros, campos e dependências injetadas.
      *
      * @param method      O método analisado.
      * @param sourceClass A classe onde o método está definido.
      * @param sourceCU    A unidade de compilação do código-fonte.
      * @return Um conjunto de classes necessárias.
      */
-    private Set<String> findRequiredClasses(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass, CompilationUnit sourceCU) {
+    private Set<String> findRequiredClasses(MethodDeclaration method, ClassOrInterfaceDeclaration sourceClass,
+            CompilationUnit sourceCU) {
         Set<String> requiredClasses = new HashSet<>();
 
         // Adiciona classes usadas como tipos de retorno e parâmetros
@@ -553,7 +578,8 @@ public class MethodExtractorV1 {
             }
         });
 
-        // Adiciona classes injetadas via Spring (campos com @Autowired ou @RequiredArgsConstructor)
+        // Adiciona classes injetadas via Spring (campos com @Autowired ou
+        // @RequiredArgsConstructor)
         sourceClass.getFields().forEach(field -> {
             if (field.isAnnotationPresent("Autowired") || field.isAnnotationPresent("RequiredArgsConstructor")) {
                 if (field.getElementType() instanceof ClassOrInterfaceType) {
@@ -574,7 +600,8 @@ public class MethodExtractorV1 {
         return requiredClasses;
     }
 
-    private void saveClass(String className, CompilationUnit sourceCU, Set<MethodDeclaration> dependentMethods, Set<FieldDeclaration> requiredFields) throws IOException {
+    private void saveClass(String className, CompilationUnit sourceCU, Set<MethodDeclaration> dependentMethods,
+            Set<FieldDeclaration> requiredFields) throws IOException {
         // Limpa o nome da classe
         String sanitizedClassName = sanitizeClassName(className);
 
@@ -596,7 +623,8 @@ public class MethodExtractorV1 {
         // Cria o diretório de destino no IceBox com a estrutura de pacotes original
         Path targetDirectory = Paths.get("IceBox", packagePath).getParent();
         if (targetDirectory == null) {
-            System.out.println("Não foi possível determinar o diretório de destino para a classe: " + sanitizedClassName);
+            System.out
+                    .println("Não foi possível determinar o diretório de destino para a classe: " + sanitizedClassName);
             return;
         }
         Files.createDirectories(targetDirectory);
@@ -671,7 +699,8 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Remove caracteres inválidos do nome da classe para criar um caminho de arquivo válido.
+     * Remove caracteres inválidos do nome da classe para criar um caminho de
+     * arquivo válido.
      *
      * @param className O nome da classe.
      * @return O nome da classe sem caracteres inválidos.
@@ -682,14 +711,15 @@ public class MethodExtractorV1 {
     }
 
     /**
-     * Encontra os campos necessários para os métodos dependentes em uma classe externa.
+     * Encontra os campos necessários para os métodos dependentes em uma classe
+     * externa.
      *
-     * @param externalClass      A classe externa a ser analisada.
-     * @param dependentMethods   Os métodos dependentes na classe externa.
+     * @param externalClass    A classe externa a ser analisada.
+     * @param dependentMethods Os métodos dependentes na classe externa.
      * @return Um conjunto de campos necessários.
      */
     private Set<FieldDeclaration> findRequiredFieldsForExternalClass(ClassOrInterfaceDeclaration externalClass,
-                                                                     Set<MethodDeclaration> dependentMethods) {
+            Set<MethodDeclaration> dependentMethods) {
         Set<FieldDeclaration> requiredFields = new HashSet<>();
 
         for (MethodDeclaration method : dependentMethods) {
@@ -705,20 +735,40 @@ public class MethodExtractorV1 {
         return requiredFields;
     }
 
-    public void extractCallPath(String methodName, List<String> parameterTypes, Path outputDir) {
-        try {
-            VeinFinder veinFinder = new VeinFinder(
-                    sourceRoot,
-                    methodName,
-                    parameterTypes
-            );
-
-            veinFinder.extractCallPaths();
-            veinFinder.saveExtractedCode(outputDir);
-
-            System.out.println("Caminho de chamada extraído para: " + outputDir);
-        } catch (IOException e) {
-            e.printStackTrace();
+/**
+ * Extracts the call path that leads to the specified method
+ * 
+ * @param sourceFilePath Path to the source file containing the method
+ * @param methodName Name of the method to trace callers for
+ * @param outputDir Directory where extracted call path should be saved
+ */
+public void extractCallPath(String sourceFilePath, String methodName, Path outputDir) {
+    try {
+        // Parse the source file to find the target class
+        File source = new File(sourceFilePath);
+        ParseResult<CompilationUnit> parseResult = new JavaParser().parse(source);
+        
+        if (parseResult.getResult().isEmpty()) {
+            System.out.println("Failed to parse source file: " + sourceFilePath);
+            return;
         }
+        
+        CompilationUnit cu = parseResult.getResult().get();
+        Optional<ClassOrInterfaceDeclaration> classOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
+        
+        if (classOpt.isEmpty()) {
+            System.out.println("No class found in source file: " + sourceFilePath);
+            return;
+        }
+        
+        String className = classOpt.get().getNameAsString();
+        
+
+        VeinFinder extractor = new VeinFinder(sourceRoot.toString());
+        extractor.extractFullCallPath(methodName, className, outputDir);
+        System.out.println("Call path extracted to: " + outputDir);
+    } catch (IOException e) {
+        e.printStackTrace();
     }
+}
 }

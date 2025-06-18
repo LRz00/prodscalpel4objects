@@ -7,14 +7,22 @@ import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 
 import java.io.FileReader;
 import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Classe responsável por gerar um novo arquivo pom.xml contendo apenas as dependências
+ * necessárias para o código extraído.
+ * A partir de uma lista de imports presentes nas classes extraídas, esta classe
+ * compara os imports com as dependências do pom.xml original do projeto e seleciona
+ * apenas as dependências relevantes.
+ * O novo pom.xml é salvo no diretório IceBox, junto com o código Java extraído.
+ *
+ * @author Lara Rodrigues
+ */
 public class PomGenerator {
 
  private final Path iceBoxPath;
@@ -96,7 +104,7 @@ public class PomGenerator {
    // Procura a dependência correspondente no pom.xml original
    for (Dependency dependency : dependencies) {
     // Verifica se o groupId ou artifactId tem pelo menos 3 palavras em comum com o import
-    if (hasAtLeastThreeCommonWords(importWords, dependency.getGroupId(), dependency.getArtifactId())) {
+    if (hasWordsInCommon(importWords, dependency.getGroupId(), dependency.getArtifactId())) {
      System.out.println("Dependência correspondente encontrada: " + dependency.getGroupId() + ":" + dependency.getArtifactId());
      requiredDependencies.add(dependency);
     }
@@ -106,7 +114,7 @@ public class PomGenerator {
   return requiredDependencies;
  }
 
- private boolean hasAtLeastThreeCommonWords(String[] importWords, String groupId, String artifactId) {
+ private boolean hasWordsInCommon(String[] importWords, String groupId, String artifactId) {
   // Divide o groupId e o artifactId em palavras
   String[] groupIdWords = groupId.split("\\.");
   String[] artifactIdWords = artifactId.split("\\.");
@@ -117,7 +125,7 @@ public class PomGenerator {
   // Conta quantas palavras do import estão no artifactId
   int commonInArtifactId = countCommonWords(importWords, artifactIdWords);
 
-  // Retorna true se houver pelo menos 3 palavras em comum
+  // Retorna true se houver pelo menos 2 palavras em comum
   return (commonInGroupId >= 2) || (commonInArtifactId >= 1);
  }
 
