@@ -24,5 +24,11 @@
         <artifactId>java-diff-utils</artifactId>
         <version>4.15</version>
     </dependency>
+
+    <dependency>
+        <groupId>org.apache.maven</groupId>
+        <artifactId>maven-model</artifactId>
+        <version>3.9.9</version>
+    </dependency>
 </dependencies>
 </project>

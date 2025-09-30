@@ -1,4 +1,4 @@
-package com.ifba.prodscalpel4objects.implanter;
+package com.ifba.prodscalpel4objects.implanter.services;
 
 import com.github.difflib.DiffUtils;
 import com.github.difflib.patch.Patch;
@@ -11,9 +11,15 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import org.apache.maven.model.Dependency;
+import org.apache.maven.model.Model;
+import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
+import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
+import org.codehaus.plexus.util.xml.pull.XmlPullParserException;
 
 import java.io.*;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
 /**
@@ -21,25 +27,33 @@ import java.util.*;
  *
  * @author Rafael Andrade
  */
-public class MethodImplanter {
+public class MethodImplanterDeprecated {
 
     private final String hostRootPath;
     private final String backupRootPath = "C:\\Users\\Micro\\IdeaProjects\\backupexample\\src\\main\\java\\org\\exemple\\backupexample";
     private final Set<String> rootPathOfReceptors = new HashSet<>();
     private final List<String> pathOfFileNames = new ArrayList<>();
     private final List<String> pathOfFileNamesDonor = new ArrayList<>();
+    private final String donorPomPath;
+    private final Set<String> pomPathOfReceptors = new HashSet<>();
 
     /**
      * Construtor da classe MethodImplanter.
      *
      * @param hostRootPath Caminho raiz do host.
      */
-    public MethodImplanter(String hostRootPath) {
+    public MethodImplanterDeprecated(String hostRootPath) {
         this.hostRootPath = hostRootPath;
+        this.donorPomPath = findPomPath(hostRootPath);
     }
 
-    public void addReceiverPath(String path){
+    public void addReceiverPath(String path) {
         this.rootPathOfReceptors.add(path);
+        addReceiverPomPath(findPomPath(path));
+    }
+
+    public void addReceiverPomPath(String path) {
+        this.pomPathOfReceptors.add(path);
     }
 
     /**
@@ -48,8 +62,8 @@ public class MethodImplanter {
     public void implant() {
 
         copy();
-
         modifyFile(pathOfFileNames, pathOfFileNamesDonor);
+        implantDependencies();
 
 //        copyFileToSp2();
 //        copyFilesToReceiver();
@@ -81,7 +95,7 @@ public class MethodImplanter {
         Map<String, String> receptorMap;
 
         try {
-            donorMap    = extractMethodsMap(donorFile);
+            donorMap = extractMethodsMap(donorFile);
             receptorMap = extractMethodsMap(receptorFile);
         } catch (IOException e) {
             System.err.println("Erro ao extrair métodos de '"
@@ -94,7 +108,7 @@ public class MethodImplanter {
         Map<String, FieldDeclaration> donorFields;
         Map<String, FieldDeclaration> receptorFields;
         try {
-            donorFields    = extractFieldsMap(donorFile);
+            donorFields = extractFieldsMap(donorFile);
             receptorFields = extractFieldsMap(receptorFile);
         } catch (IOException e) {
             System.err.println("Erro ao extrair atributos de '"
@@ -222,7 +236,7 @@ public class MethodImplanter {
 
         // Modificadores diferentes?
         NodeList<Modifier> modDonor = donorFd.getModifiers();
-        NodeList<Modifier> modRec  = receptorFd.getModifiers();
+        NodeList<Modifier> modRec = receptorFd.getModifiers();
         if (!new HashSet<>(modDonor).equals(new HashSet<>(modRec))) return true;
 
         // Inicializador: se um tem e outro não, ou ambos têm mas texto diferente
@@ -231,7 +245,7 @@ public class MethodImplanter {
         }
         if (donorVar.getInitializer().isPresent() && receptorVar.getInitializer().isPresent()) {
             String initDonor = donorVar.getInitializer().get().toString();
-            String initRec   = receptorVar.getInitializer().get().toString();
+            String initRec = receptorVar.getInitializer().get().toString();
             if (!initDonor.equals(initRec)) return true;
         }
 
@@ -240,8 +254,9 @@ public class MethodImplanter {
 
     /**
      * Encontra em um arquivo Java do doador o FieldDeclaration contendo a variável com o nome dado.
-     * @param donorFile  arquivo do doador
-     * @param name       nome da variável
+     *
+     * @param donorFile arquivo do doador
+     * @param name      nome da variável
      * @return FieldDeclaration original (pode declarar múltiplas variáveis)
      * @throws IOException em caso de falha no parse
      */
@@ -262,9 +277,10 @@ public class MethodImplanter {
 
     /**
      * Adiciona ao receptor o atributo (FieldDeclaration) do doador, preservando apenas a variável com o nome dado.
-     * @param donorFile     arquivo do doador
-     * @param receptorFile  arquivo do receptor
-     * @param name          nome da variável a adicionar
+     *
+     * @param donorFile    arquivo do doador
+     * @param receptorFile arquivo do receptor
+     * @param name         nome da variável a adicionar
      */
     private void addSingleField(File donorFile, File receptorFile, String name) {
         try {
@@ -294,9 +310,10 @@ public class MethodImplanter {
 
     /**
      * Substitui no receptor o atributo existente pelo doador: remove o FieldDeclaration atual e insere o novo.
-     * @param donorFile     arquivo do doador
-     * @param receptorFile  arquivo do receptor
-     * @param name          nome da variável a substituir
+     *
+     * @param donorFile    arquivo do doador
+     * @param receptorFile arquivo do receptor
+     * @param name         nome da variável a substituir
      */
     private void replaceSingleField(File donorFile, File receptorFile, String name) {
         try {
@@ -338,8 +355,8 @@ public class MethodImplanter {
      * Para um arquivo do doador e um receptor específico,
      * decide se deve copiar o arquivo todo ou apenas processar merge de métodos.
      *
-     * @param donorFile     Arquivo Java do doador.
-     * @param receptorRoot  Caminho raiz do sistema receptor.
+     * @param donorFile    Arquivo Java do doador.
+     * @param receptorRoot Caminho raiz do sistema receptor.
      */
     private void processFileForReceptor(File donorFile, String receptorRoot) {
         String pkg = getPackageNameFromFile(donorFile);
@@ -356,9 +373,9 @@ public class MethodImplanter {
      * Constrói o objeto File que representa o local de destino
      * dentro do receptor, criando diretórios se necessário.
      *
-     * @param donorFile     Arquivo Java do doador.
-     * @param receptorRoot  Caminho raiz do sistema receptor.
-     * @param pkg           Nome do pacote (com barras) do arquivo.
+     * @param donorFile    Arquivo Java do doador.
+     * @param receptorRoot Caminho raiz do sistema receptor.
+     * @param pkg          Nome do pacote (com barras) do arquivo.
      * @return File apontando para o caminho de destino.
      */
     private File buildReceptorFile(File donorFile, String receptorRoot, String pkg) {
@@ -372,12 +389,12 @@ public class MethodImplanter {
      * Verifica se um método com mesma assinatura difere no corpo entre doador e receptor;
      * se diferir, pergunta ao usuário se deve mesclar e chama mergeSingleMethod.
      *
-     * @param sig            Assinatura do método.
-     * @param donorBody      Corpo do método no doador.
-     * @param receptorBody   Corpo do método no receptor.
-     * @param donorFile      Arquivo Java do doador.
-     * @param receptorFile   Arquivo Java do receptor.
-     * @param receptorRoot   Caminho raiz do sistema receptor.
+     * @param sig          Assinatura do método.
+     * @param donorBody    Corpo do método no doador.
+     * @param receptorBody Corpo do método no receptor.
+     * @param donorFile    Arquivo Java do doador.
+     * @param receptorFile Arquivo Java do receptor.
+     * @param receptorRoot Caminho raiz do sistema receptor.
      */
     private void processPotentialMerge(String sig,
                                        String donorBody,
@@ -401,10 +418,10 @@ public class MethodImplanter {
      * extrai o MethodDeclaration do doador, substitui o corpo no receptor,
      * grava o arquivo e registra o caminho para ajuste de pacote.
      *
-     * @param sig            Assinatura do método.
-     * @param donorFile      Arquivo Java do doador.
-     * @param receptorFile   Arquivo Java do receptor.
-     * @param receptorRoot   Caminho raiz do sistema receptor.
+     * @param sig          Assinatura do método.
+     * @param donorFile    Arquivo Java do doador.
+     * @param receptorFile Arquivo Java do receptor.
+     * @param receptorRoot Caminho raiz do sistema receptor.
      */
     private void mergeSingleMethod(String sig,
                                    File donorFile,
@@ -531,9 +548,9 @@ public class MethodImplanter {
     /**
      * Adiciona ao final da classe receptor o método do doador com a assinatura dada.
      *
-     * @param donorFile     Arquivo Java do doador.
-     * @param receptorFile  Arquivo Java do receptor.
-     * @param signature     Assinatura do método a ser inserido.
+     * @param donorFile    Arquivo Java do doador.
+     * @param receptorFile Arquivo Java do receptor.
+     * @param signature    Assinatura do método a ser inserido.
      */
     private void addSingleMethod(File donorFile, File receptorFile, String signature) {
         try {
@@ -641,9 +658,9 @@ public class MethodImplanter {
     /**
      * Copia um arquivo Java para o diretório de destino.
      *
-     * @param sourceFilePath Caminho do arquivo de origem.
-     * @param packageName Nome do pacote do arquivo.
-     * @param fileName Nome do arquivo.
+     * @param sourceFilePath      Caminho do arquivo de origem.
+     * @param packageName         Nome do pacote do arquivo.
+     * @param fileName            Nome do arquivo.
      * @param destinationFilePath Caminho do diretório de destino.
      */
     private void copyJavaFile(String sourceFilePath, String packageName, String fileName, String destinationFilePath) {
@@ -877,8 +894,8 @@ public class MethodImplanter {
      * Modifica os arquivos Java receptores ajustando a declaração de package e corrigindo os imports
      * que ainda fazem referência ao projeto doador.
      *
-     * @param pathOfFileNames       Lista de caminhos absolutos dos arquivos do projeto receptor.
-     * @param pathOfFileNamesDonor  Lista de caminhos absolutos dos arquivos do projeto doador.
+     * @param pathOfFileNames      Lista de caminhos absolutos dos arquivos do projeto receptor.
+     * @param pathOfFileNamesDonor Lista de caminhos absolutos dos arquivos do projeto doador.
      */
     public void modifyFile(List<String> pathOfFileNames, List<String> pathOfFileNamesDonor) {
         JavaParser javaParser = new JavaParser();
@@ -919,8 +936,8 @@ public class MethodImplanter {
      * Modifica ou adiciona a declaração de package em uma unidade de compilação.
      * O nome do package é inferido com base na estrutura de diretórios do projeto receptor.
      *
-     * @param cu            Unidade de compilação do arquivo Java receptor.
-     * @param receptorFile  Arquivo Java receptor.
+     * @param cu           Unidade de compilação do arquivo Java receptor.
+     * @param receptorFile Arquivo Java receptor.
      */
     private void modifyPackageDeclaration(CompilationUnit cu, File receptorFile) {
         String receptorPackage = getPackageNameFromJavaFolder(receptorFile); // Determina o package com base na estrutura de pastas
@@ -939,9 +956,9 @@ public class MethodImplanter {
      * Corrige as declarações de import do arquivo receptor que ainda apontam para pacotes do doador,
      * substituindo pelo pacote do receptor, com base nos nomes de projeto e estrutura de diretórios.
      *
-     * @param cu             Unidade de compilação do arquivo receptor.
-     * @param receptorFile   Arquivo Java receptor.
-     * @param donorFile      Arquivo Java doador correspondente.
+     * @param cu           Unidade de compilação do arquivo receptor.
+     * @param receptorFile Arquivo Java receptor.
+     * @param donorFile    Arquivo Java doador correspondente.
      */
     private void modifyImports(CompilationUnit cu, File receptorFile, File donorFile) {
         String donorPackage = getPackageNameFromJavaFolder(donorFile);         // Pacote doador completo
@@ -1002,4 +1019,202 @@ public class MethodImplanter {
         }
         return "Pasta Desconhecida";
     }
+
+    /**
+     * Orquestra o processo de identificação e adição de dependências nos poms dos receptores.
+     */
+    public void implantDependencies() {
+        if (donorPomPath == null || pomPathOfReceptors.isEmpty()) {
+            System.out.println("Caminhos do pom.xml doador ou receptor não configurados. Pulando implantação de dependências.");
+            return;
+        }
+
+        System.out.println("Iniciando a implantação de dependências...");
+        Set<String> allImports = collectImportsFromModifiedFiles();
+        if (allImports.isEmpty()) {
+            System.out.println("Nenhum arquivo foi modificado. Nenhuma dependência a ser processada.");
+            return;
+        }
+
+        try {
+            Model donorModel = readPom(new File(donorPomPath));
+            List<Dependency> donorDependencies = donorModel.getDependencies();
+
+            Set<Dependency> requiredDependencies = findRequiredDependencies(allImports, donorDependencies);
+
+            for (String receptorPomPath : pomPathOfReceptors) {
+                try {
+                    File receptorPomFile = new File(receptorPomPath);
+                    Model receptorModel = readPom(receptorPomFile);
+
+                    int count = addMissingDependencies(receptorModel, requiredDependencies);
+
+                    if (count > 0) {
+                        writePom(receptorPomFile, receptorModel);
+                        System.out.println(count + " nova(s) dependência(s) adicionada(s) a: " + receptorPomPath);
+                    } else {
+                        System.out.println("Nenhuma dependência nova necessária para: " + receptorPomPath);
+                    }
+
+                } catch (IOException | XmlPullParserException e) {
+                    System.err.println("Erro ao processar o pom receptor: " + receptorPomPath + " - " + e.getMessage());
+                }
+            }
+
+        } catch (IOException | XmlPullParserException e) {
+            System.err.println("Erro ao ler o pom doador: " + donorPomPath + " - " + e.getMessage());
+        }
+    }
+
+    /**
+     * Coleta todos os imports únicos dos arquivos que foram modificados no processo.
+     */
+    private Set<String> collectImportsFromModifiedFiles() {
+        Set<String> allImports = new HashSet<>();
+        JavaParser javaParser = new JavaParser();
+
+        for (String filePath : new HashSet<>(pathOfFileNames)) { // Usa um Set para evitar arquivos duplicados
+            try {
+                CompilationUnit cu = javaParser.parse(new File(filePath)).getResult()
+                        .orElseThrow(() -> new IOException("Não foi possível parsear " + filePath));
+                cu.getImports().forEach(i -> allImports.add(i.getNameAsString()));
+            } catch (IOException e) {
+                System.err.println("Não foi possível coletar imports do arquivo: " + filePath + " - " + e.getMessage());
+            }
+        }
+        return allImports;
+    }
+
+    /**
+     * Adiciona ao modelo do receptor as dependências necessárias que ainda não existem.
+     * Retorna o número de dependências adicionadas.
+     */
+    private int addMissingDependencies(Model receptorModel, Set<Dependency> requiredDependencies) {
+        Set<String> existingDependencies = new HashSet<>();
+        receptorModel.getDependencies().forEach(dep ->
+                existingDependencies.add(dep.getGroupId() + ":" + dep.getArtifactId())
+        );
+
+        int addedCount = 0;
+        for (Dependency requiredDep : requiredDependencies) {
+            String dependencyCoord = requiredDep.getGroupId() + ":" + requiredDep.getArtifactId();
+            if (!existingDependencies.contains(dependencyCoord)) {
+                receptorModel.addDependency(requiredDep);
+                addedCount++;
+            }
+        }
+        return addedCount;
+    }
+
+    /**
+     * Lê um arquivo pom.xml e o converte para um objeto Model do Maven.
+     */
+    private Model readPom(File pomFile) throws IOException, XmlPullParserException {
+        MavenXpp3Reader reader = new MavenXpp3Reader();
+        try (FileReader fileReader = new FileReader(pomFile)) {
+            return reader.read(fileReader);
+        }
+    }
+
+    /**
+     * Escreve o objeto Model do Maven de volta para um arquivo pom.xml.
+     */
+    private void writePom(File pomFile, Model model) throws IOException {
+        MavenXpp3Writer writer = new MavenXpp3Writer();
+        try (FileWriter fileWriter = new FileWriter(pomFile)) {
+            writer.write(fileWriter, model);
+        }
+    }
+
+    /**
+     * Filtra as dependências do pom.xml original com base nos imports.
+     * Lógica adaptada da classe PomGenerator.
+     */
+    private Set<Dependency> findRequiredDependencies(Set<String> imports, List<Dependency> allDependencies) {
+        Set<Dependency> requiredDependencies = new HashSet<>();
+
+        for (String importLine : imports) {
+            String importGroup = extractGroupFromImport(importLine);
+            String[] importWords = importGroup.split("\\.");
+
+            for (Dependency dependency : allDependencies) {
+                if (hasWordsInCommon(importWords, dependency.getGroupId(), dependency.getArtifactId())) {
+                    requiredDependencies.add(dependency);
+                }
+            }
+        }
+        return requiredDependencies;
+    }
+
+    /**
+     * Extrai o nome do pacote de uma linha de import.
+     */
+    private String extractGroupFromImport(String importLine) {
+        int lastDotIndex = importLine.lastIndexOf('.');
+        if (lastDotIndex != -1) {
+            return importLine.substring(0, lastDotIndex);
+        }
+        return importLine;
+    }
+
+    /**
+     * Verifica se há palavras em comum entre o import e as coordenadas da dependência.
+     */
+    private boolean hasWordsInCommon(String[] importWords, String groupId, String artifactId) {
+        long commonInGroupId = countCommonWords(importWords, groupId.split("\\."));
+        long commonInArtifactId = countCommonWords(importWords, artifactId.split("-")); // ArtifactId usa hífens
+
+        // Critério: Pelo menos 2 palavras em comum com o groupId ou 1 com o artifactId
+        return (commonInGroupId >= 2) || (commonInArtifactId >= 1);
+    }
+
+    /**
+     * Conta as palavras em comum entre dois arrays de strings.
+     */
+    private long countCommonWords(String[] words1, String[] words2) {
+        Set<String> set1 = new HashSet<>(Arrays.asList(words1));
+        Set<String> set2 = new HashSet<>(Arrays.asList(words2));
+        set1.retainAll(set2);
+        return set1.size();
+    }
+
+    /**
+     * Encontra o caminho para o pom.xml subindo na estrutura de diretórios
+     * até encontrar uma pasta que contenha o diretório 'src'.
+     *
+     * @param projectPath O caminho absoluto de partida (ex: C:\\...).
+     * @return O caminho completo para o pom.xml, ou null se a pasta 'src' não for encontrada.
+     */
+    private String findPomPath(String projectPath) {
+        // Cria um objeto File para facilitar a manipulação do caminho
+        File currentDir = new File(projectPath);
+
+        // Garante que estamos começando de um diretório.
+        // Se o caminho inicial for um arquivo, pegamos a pasta que o contém.
+        if (currentDir.isFile()) {
+            currentDir = currentDir.getParentFile();
+        }
+
+        // Loop para "subir" uma pasta de cada vez
+        while (currentDir != null) {
+            // Cria um objeto File para a potencial pasta 'src' dentro do diretório atual
+            File srcFolder = new File(currentDir, "src");
+
+            // Verifica se a pasta 'src' existe no diretório atual
+            if (srcFolder.exists() && srcFolder.isDirectory()) {
+                // Se encontrou a pasta 'src', significa que 'currentDir' é a raiz do projeto.
+                // Monta o caminho para o pom.xml e o retorna.
+                String pomPath = Paths.get(currentDir.getAbsolutePath(), "pom.xml").toString();
+                System.out.println("Caminho do pom: " + pomPath);
+                return pomPath;
+            }
+
+            // Se não encontrou, sobe para a pasta pai para a próxima iteração
+            currentDir = currentDir.getParentFile();
+        }
+
+        // Se o loop terminar, significa que a pasta 'src' não foi encontrada em nenhum nível
+        return null;
+    }
+
 }
