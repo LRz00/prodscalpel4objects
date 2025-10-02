@@ -30,20 +30,21 @@ public class MethodImplanter {
     private final Set<String> rootPathOfReceptors = new HashSet<>();
     private final List<String> pathOfFileNames = new ArrayList<>();
     private final List<String> pathOfFileNamesDonor = new ArrayList<>();
-    private final String donorPomPath;
+    private String donorPomPath;
     private final Set<String> pomPathOfReceptors = new HashSet<>();
 
     /**
      * Construtor da classe.
+     *
      * @param hostRootPath O caminho para o diretório fonte do projeto doador.
      */
     public MethodImplanter(String hostRootPath) {
         this.hostRootPath = hostRootPath;
-        this.donorPomPath = scanner.findPomPath(hostRootPath);
     }
 
     /**
      * Adiciona o caminho de um projeto receptor à lista de alvos.
+     *
      * @param path O caminho para o diretório do projeto receptor.
      */
     public void addReceiverPath(String path) {
@@ -53,10 +54,11 @@ public class MethodImplanter {
 
     /**
      * Adiciona o caminho de um arquivo pom.xml de um receptor.
+     *
      * @param path O caminho completo para o arquivo pom.xml.
      */
     public void addReceiverPomPath(String path) {
-        if(path != null) this.pomPathOfReceptors.add(path);
+        if (path != null) this.pomPathOfReceptors.add(path);
     }
 
     /**
@@ -86,7 +88,8 @@ public class MethodImplanter {
 
     /**
      * Processa um único arquivo doador para um receptor específico, decidindo se deve copiar ou mesclar.
-     * @param donorFile O arquivo doador a ser processado.
+     *
+     * @param donorFile    O arquivo doador a ser processado.
      * @param receptorRoot O caminho raiz do projeto receptor.
      */
     private void processFileForReceptor(File donorFile, String receptorRoot) {
@@ -102,8 +105,9 @@ public class MethodImplanter {
 
     /**
      * Copia um arquivo de origem para o destino, criando a estrutura de pacotes necessária.
-     * @param sourceFile O arquivo de origem.
-     * @param packageName O caminho do pacote (com separadores de diretório).
+     *
+     * @param sourceFile          O arquivo de origem.
+     * @param packageName         O caminho do pacote (com separadores de diretório).
      * @param destinationRootPath O diretório raiz do destino.
      */
     private void copyJavaFile(File sourceFile, String packageName, String destinationRootPath) {
@@ -125,9 +129,10 @@ public class MethodImplanter {
 
     /**
      * Constrói e retorna um objeto `File` representando o caminho de destino de um arquivo no receptor.
-     * @param donorFile O arquivo doador (usado para obter o nome do arquivo).
+     *
+     * @param donorFile    O arquivo doador (usado para obter o nome do arquivo).
      * @param receptorRoot O caminho raiz do receptor.
-     * @param pkg O caminho do pacote (com separadores de diretório).
+     * @param pkg          O caminho do pacote (com separadores de diretório).
      * @return Um objeto `File` apontando para o local de destino.
      */
     private File buildReceptorFile(File donorFile, String receptorRoot, String pkg) {
@@ -139,7 +144,8 @@ public class MethodImplanter {
 
     /**
      * Gerencia a lógica de comparação e merge para um arquivo que já existe no doador e no receptor.
-     * @param donorFile O arquivo doador.
+     *
+     * @param donorFile    O arquivo doador.
      * @param receptorFile O arquivo receptor.
      * @param receptorRoot O caminho raiz do receptor (usado para logs).
      */
@@ -165,11 +171,12 @@ public class MethodImplanter {
 
     /**
      * Lida com a lógica de interação com o usuário para adicionar ou substituir atributos (fields).
-     * @param donorFields Mapa de atributos do doador.
+     *
+     * @param donorFields    Mapa de atributos do doador.
      * @param receptorFields Mapa de atributos do receptor.
-     * @param donorFile Arquivo doador.
-     * @param receptorFile Arquivo receptor.
-     * @param receptorRoot Caminho raiz do receptor.
+     * @param donorFile      Arquivo doador.
+     * @param receptorFile   Arquivo receptor.
+     * @param receptorRoot   Caminho raiz do receptor.
      */
     private void processNewFields(Map<String, FieldDeclaration> donorFields, Map<String, FieldDeclaration> receptorFields, File donorFile, File receptorFile, String receptorRoot) {
         for (Map.Entry<String, FieldDeclaration> entry : donorFields.entrySet()) {
@@ -184,7 +191,7 @@ public class MethodImplanter {
                         modifier.addSingleField(fieldToCopy, receptorFile, name);
                         pathOfFileNames.add(receptorFile.getAbsolutePath());
                         System.out.println("Atributo '" + name + "' adicionado a " + receptorRoot);
-                    } catch(IOException e) {
+                    } catch (IOException e) {
                         System.err.println("Falha ao adicionar atributo '" + name + "': " + e.getMessage());
                     }
                 }
@@ -210,9 +217,10 @@ public class MethodImplanter {
 
     /**
      * Lida com a lógica de interação com o usuário para adicionar novos métodos.
-     * @param donorSigs Conjunto de assinaturas de métodos do doador.
+     *
+     * @param donorSigs    Conjunto de assinaturas de métodos do doador.
      * @param receptorSigs Conjunto de assinaturas de métodos do receptor.
-     * @param donorFile Arquivo doador.
+     * @param donorFile    Arquivo doador.
      * @param receptorFile Arquivo receptor.
      * @param receptorRoot Caminho raiz do receptor.
      */
@@ -227,7 +235,7 @@ public class MethodImplanter {
                         modifier.addSingleMethod(methodToCopy, receptorFile);
                         pathOfFileNames.add(receptorFile.getAbsolutePath());
                         System.out.println("Método '" + sig + "' adicionado a " + receptorRoot);
-                    } catch(IOException e) {
+                    } catch (IOException e) {
                         System.err.println("Falha ao adicionar método '" + sig + "': " + e.getMessage());
                     }
                 }
@@ -237,10 +245,11 @@ public class MethodImplanter {
 
     /**
      * Verifica se há diferenças entre o corpo de dois métodos e pergunta ao usuário se deseja mesclá-los.
-     * @param sig Assinatura do método.
-     * @param donorBody Corpo do método doador.
+     *
+     * @param sig          Assinatura do método.
+     * @param donorBody    Corpo do método doador.
      * @param receptorBody Corpo do método receptor.
-     * @param donorFile Arquivo doador.
+     * @param donorFile    Arquivo doador.
      * @param receptorFile Arquivo receptor.
      * @param receptorRoot Caminho raiz do receptor.
      */
@@ -259,8 +268,9 @@ public class MethodImplanter {
 
     /**
      * Executa a ação de substituir o corpo de um método no receptor.
-     * @param sig A assinatura do método a ser mesclado.
-     * @param donorFile O arquivo doador.
+     *
+     * @param sig          A assinatura do método a ser mesclado.
+     * @param donorFile    O arquivo doador.
      * @param receptorFile O arquivo receptor.
      */
     private void mergeSingleMethod(String sig, File donorFile, File receptorFile) {
@@ -298,41 +308,45 @@ public class MethodImplanter {
 
     /**
      * Orquestra o processo de identificação e adição de dependências nos poms dos receptores.
+     * INCLUI UMA VERIFICAÇÃO PARA IGNORAR O PROCESSO SE A ORIGEM FOR "IceBox".
      */
     public void implantDependencies() {
+        if (this.hostRootPath != null && this.hostRootPath.contains("IceBox")) {
+            System.out.println("\nAVISO: O projeto hospedeiro é 'IceBox'. A implantação de dependências será ignorada.");
+            return;
+        }
+        this.donorPomPath = scanner.findPomPath(hostRootPath);
+
         if (donorPomPath == null || pomPathOfReceptors.isEmpty()) {
-            System.out.println("Caminhos do pom.xml não configurados. Pulando implantação de dependências.");
+            System.out.println("\nCaminhos do pom.xml não configurados. Pulando implantação de dependências.");
             return;
         }
 
-        System.out.println("Iniciando a implantação de dependências...");
+        pomManager.analyzeDonorDependencies(new File(donorPomPath));
+
+        System.out.println("\nIniciando a implantação de dependências...");
         Set<String> allImports = parser.collectImportsFromModifiedFiles(pathOfFileNames);
         if (allImports.isEmpty()) {
             System.out.println("Nenhum arquivo foi modificado. Nenhuma dependência a ser processada.");
             return;
         }
 
-        try {
-            Model donorModel = pomManager.readPom(new File(donorPomPath));
-            Set<Dependency> requiredDependencies = pomManager.findRequiredDependencies(allImports, donorModel.getDependencies());
+        Set<Dependency> requiredDependencies = pomManager.findRequiredDependencies(allImports);
 
+        try {
             for (String receptorPomPath : pomPathOfReceptors) {
-                try {
-                    File receptorPomFile = new File(receptorPomPath);
-                    Model receptorModel = pomManager.readPom(receptorPomFile);
-                    int count = pomManager.addMissingDependencies(receptorModel, requiredDependencies);
-                    if (count > 0) {
-                        pomManager.writePom(receptorPomFile, receptorModel);
-                        System.out.println(count + " nova(s) dependência(s) adicionada(s) a: " + receptorPomPath);
-                    } else {
-                        System.out.println("Nenhuma dependência nova necessária para: " + receptorPomPath);
-                    }
-                } catch (IOException | XmlPullParserException e) {
-                    System.err.println("Erro ao processar o pom receptor: " + receptorPomPath + " - " + e.getMessage());
+                File receptorPomFile = new File(receptorPomPath);
+                Model receptorModel = pomManager.readPom(receptorPomFile);
+                int count = pomManager.addMissingDependencies(receptorModel, requiredDependencies);
+                if (count > 0) {
+                    pomManager.writePom(receptorPomFile, receptorModel);
+                    System.out.println(count + " nova(s) dependência(s) adicionada(s) a: " + receptorPomPath);
+                } else {
+                    System.out.println("Nenhuma dependência nova necessária para: " + receptorPomPath);
                 }
             }
         } catch (IOException | XmlPullParserException e) {
-            System.err.println("Erro ao ler o pom doador: " + donorPomPath + " - " + e.getMessage());
+            System.err.println("Erro ao processar o pom receptor: " + e.getMessage());
         }
     }
 }

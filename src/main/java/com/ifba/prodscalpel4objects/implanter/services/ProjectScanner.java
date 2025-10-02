@@ -150,7 +150,7 @@ public class ProjectScanner {
             }
             current = current.getParentFile();
         }
-        System.out.println("Projeto não identificado.");
+        System.out.println("Projeto não identificado ou icebox.");
         return "ProjetoDesconhecido";
     }
 
