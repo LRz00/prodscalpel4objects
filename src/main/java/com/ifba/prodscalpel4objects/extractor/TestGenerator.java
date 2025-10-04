@@ -30,37 +30,47 @@ public class TestGenerator {
         this.httpClient = HttpClient.newHttpClient();
     }
 
-    public void generateAndRunTests(String methodName) throws IOException {
-        generateTests(methodName);
+    public void generateAndRunTests(String methodName, String sourceFilepath) throws IOException {
+        generateTests(methodName, sourceFilepath);
         runTests();
     }
 
-    private void generateTests(String methodName) throws IOException {
+    private void generateTests(String methodName, String sourceFilepath) throws IOException {
         Path testsDir = iceBoxPath.resolve("tests");
         Files.createDirectories(testsDir);
 
+        // Primeiro, encontre a classe que contém o método
+        String targetClassName = Paths.get(sourceFilepath).getFileName().toString().replace(".java", "");
+
+        System.out.println("🎯 Gerando testes para a classe: " + targetClassName + ", método: " + methodName);
+
+        // Agora processa apenas a classe que contém o método
         Files.walk(iceBoxPath)
                 .filter(path -> Files.isRegularFile(path) && path.toString().endsWith(".java"))
+                .filter(path -> path.getFileName().toString().replace(".java", "").equals(targetClassName))
                 .forEach(path -> {
                     try {
                         String code = Files.readString(path);
 
                         // Construindo o JSON para a API OpenAI
                         JSONObject requestBody = new JSONObject();
-                        requestBody.put("model", "gpt-5");
+                        requestBody.put("model", "gpt-4o-mini");
 
                         JSONArray messages = new JSONArray();
                         JSONObject message = new JSONObject();
                         message.put("role", "user");
                         message.put("content", "Você é um gerador de testes em Java usando JUnit 5 e Mockito."
-                                + "Foque em testar apenas o método chamado '" + methodName + "' e sua classe, nao teste mais nada. "
-                                + "Use Mockito se necessário. Não modifique o código original, apenas crie testes.\n\n"
-                                + "Em sua resposta nao inclua nada alem de código."
-                                + code);
+                                + "Foque em testar APENAS o método chamado '" + methodName + "' da classe '" + targetClassName + "'. "
+                                + "Não gere testes para outros métodos. Use as outras classes apenas como contexto se necessário. "
+                                + "Use Mockito se necessário para mockar dependências. "
+                                + "Não modifique o código original, apenas crie testes unitários.\n\n"
+                                + "Em sua resposta não inclua nada além do código Java dos testes.\n\n"
+                                + "Código da classe:\n" + code);
 
                         messages.put(message);
 
                         requestBody.put("messages", messages);
+                        requestBody.put("max_completion_tokens", 1200);
 
                         HttpRequest request = HttpRequest.newBuilder()
                                 .uri(URI.create("https://api.openai.com/v1/chat/completions"))
@@ -71,13 +81,16 @@ public class TestGenerator {
 
                         HttpResponse<String> response = httpClient.send(request, BodyHandlers.ofString());
                         
-                        ///debug
+                        // Debug
                         try (FileWriter writer = new FileWriter("api_responses.log", true)) {
                             writer.write("==== " + LocalDateTime.now() + " ====\n");
+                            writer.write("Método alvo: " + methodName + "\n");
+                            writer.write("Classe alvo: " + targetClassName + "\n");
                             writer.write(response.body() + "\n\n");
                         } catch (IOException e) {
                             System.err.println("Erro ao salvar log da API: " + e.getMessage());
                         }
+
                         // Parse da resposta
                         JSONObject responseJson = new JSONObject(response.body());
                         String testContent = responseJson.getJSONArray("choices")
@@ -85,22 +98,59 @@ public class TestGenerator {
                                 .getJSONObject("message")
                                 .getString("content");
 
-                        String fileName = path.getFileName().toString().replace(".java", "Test.java");
+                        // Limpa possíveis markdown ou formatação extra
+                        testContent = cleanTestContent(testContent);
+
+                        String fileName = targetClassName + "Test.java";
                         Path testFile = testsDir.resolve(fileName);
 
                         if (Files.exists(testFile)) {
-                            System.out.println("⚠️ Arquivo de teste já existe: " + testFile + ". Pulando...");
-                            return;
+                            System.out.println("⚠️ Arquivo de teste já existe: " + testFile + ". Sobrescrevendo...");
                         }
 
-                        Files.writeString(testFile, testContent);
-                        System.out.println("Teste gerado: " + testFile);
+                        Files.writeString(testFile, testContent, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                        System.out.println("✅ Teste gerado: " + testFile);
 
                     } catch (Exception e) {
-                        System.err.println("Erro ao processar arquivo: " + path);
+                        System.err.println("❌ Erro ao processar arquivo: " + path);
                         e.printStackTrace();
                     }
                 });
+    }
+
+    /**
+     * Limpa o conteúdo do teste removendo markdown e formatação extra
+     */
+    private String cleanTestContent(String testContent) {
+        // Remove blocos de código markdown
+        testContent = testContent.replaceAll("```java", "").replaceAll("```", "");
+        
+        // Remove possíveis textos explicativos no início/fim
+        testContent = testContent.trim();
+        
+        // Garante que começa com package ou import
+        if (!testContent.startsWith("package") && !testContent.startsWith("import")) {
+            // Encontra a primeira linha que parece código Java
+            String[] lines = testContent.split("\n");
+            StringBuilder cleaned = new StringBuilder();
+            boolean codeStarted = false;
+            
+            for (String line : lines) {
+                if (line.trim().startsWith("package") || 
+                    line.trim().startsWith("import") || 
+                    line.trim().startsWith("@") ||
+                    line.trim().startsWith("public class") ||
+                    line.trim().startsWith("class")) {
+                    codeStarted = true;
+                }
+                if (codeStarted) {
+                    cleaned.append(line).append("\n");
+                }
+            }
+            testContent = cleaned.toString();
+        }
+        
+        return testContent.trim();
     }
 
     private void runTests() {
