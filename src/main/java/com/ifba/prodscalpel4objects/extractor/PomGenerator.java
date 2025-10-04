@@ -2,6 +2,7 @@ package com.ifba.prodscalpel4objects.extractor;
 
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Model;
+import org.apache.maven.model.Parent;
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.model.io.xpp3.MavenXpp3Writer;
 
@@ -14,10 +15,13 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Classe responsável por gerar um novo arquivo pom.xml contendo apenas as dependências
- * necessárias para o código extraído.
+ * Classe responsável por gerar um novo arquivo pom.xml contendo apenas as
+ * dependências
+ * necessárias para o código extraído, mantendo também as seções parent e
+ * dependencyManagement.
  * A partir de uma lista de imports presentes nas classes extraídas, esta classe
- * compara os imports com as dependências do pom.xml original do projeto e seleciona
+ * compara os imports com as dependências do pom.xml original do projeto e
+ * seleciona
  * apenas as dependências relevantes.
  * O novo pom.xml é salvo no diretório IceBox, junto com o código Java extraído.
  *
@@ -34,7 +38,8 @@ public class PomGenerator {
  }
 
  /**
-  * Gera um novo pom.xml no diretório IceBox com as dependências necessárias.
+  * Gera um novo pom.xml no diretório IceBox com as dependências necessárias,
+  * mantendo as seções parent e dependencyManagement do pom.xml original.
   *
   * @param imports Os imports das classes extraídas.
   */
@@ -52,6 +57,21 @@ public class PomGenerator {
   iceBoxModel.setArtifactId("icebox-project");
   iceBoxModel.setVersion("1.0.0");
 
+  // Copia a seção parent do pom.xml original, se existir
+  if (originalModel.getParent() != null) {
+   Parent parent = new Parent();
+   parent.setGroupId(originalModel.getParent().getGroupId());
+   parent.setArtifactId(originalModel.getParent().getArtifactId());
+   parent.setVersion(originalModel.getParent().getVersion());
+   parent.setRelativePath(originalModel.getParent().getRelativePath());
+   iceBoxModel.setParent(parent);
+  }
+
+  // Copia a seção dependencyManagement do pom.xml original, se existir
+  if (originalModel.getDependencyManagement() != null) {
+   iceBoxModel.setDependencyManagement(originalModel.getDependencyManagement());
+  }
+
   // Adiciona as dependências necessárias ao novo modelo
   requiredDependencies.forEach(iceBoxModel::addDependency);
 
@@ -61,6 +81,8 @@ public class PomGenerator {
   writer.write(new FileWriter(pomPath.toFile()), iceBoxModel);
 
   System.out.println("Novo pom.xml gerado em: " + pomPath);
+  System.out.println("Parent incluído: " + (iceBoxModel.getParent() != null));
+  System.out.println("DependencyManagement incluído: " + (iceBoxModel.getDependencyManagement() != null));
  }
 
  /**
@@ -94,7 +116,8 @@ public class PomGenerator {
 
   // Para cada import, verifica se ele corresponde a uma dependência
   for (String importLine : imports) {
-   // Extrai o grupo da importação (ex: "org.springframework.mail" de "org.springframework.mail.SimpleMailMessage")
+   // Extrai o grupo da importação (ex: "org.springframework.mail" de
+   // "org.springframework.mail.SimpleMailMessage")
    String importGroup = extractGroupFromImport(importLine);
    System.out.println("Import analisado: " + importLine + " -> Grupo: " + importGroup);
 
@@ -103,9 +126,11 @@ public class PomGenerator {
 
    // Procura a dependência correspondente no pom.xml original
    for (Dependency dependency : dependencies) {
-    // Verifica se o groupId ou artifactId tem pelo menos 3 palavras em comum com o import
+    // Verifica se o groupId ou artifactId tem pelo menos 3 palavras em comum com o
+    // import
     if (hasWordsInCommon(importWords, dependency.getGroupId(), dependency.getArtifactId())) {
-     System.out.println("Dependência correspondente encontrada: " + dependency.getGroupId() + ":" + dependency.getArtifactId());
+     System.out.println("Dependência correspondente encontrada: " + dependency.getGroupId() + ":"
+       + dependency.getArtifactId());
      requiredDependencies.add(dependency);
     }
    }
@@ -141,10 +166,12 @@ public class PomGenerator {
   }
   return commonCount;
  }
+
  /**
   * Extrai o grupo de uma importação.
   *
-  * @param importLine A linha de importação (ex: "org.apache.maven.model.Dependency").
+  * @param importLine A linha de importação (ex:
+  *                   "org.apache.maven.model.Dependency").
   * @return O grupo da importação (ex: "org.apache.maven").
   */
  private String extractGroupFromImport(String importLine) {
