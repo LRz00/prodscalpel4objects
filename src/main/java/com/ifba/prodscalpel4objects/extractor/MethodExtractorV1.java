@@ -1,9 +1,19 @@
 package com.ifba.prodscalpel4objects.extractor;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -13,13 +23,6 @@ import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.*;
 
 /**
  * Classe responsável por extrair um método e suas dependências para um novo
@@ -64,7 +67,7 @@ public class MethodExtractorV1 {
 
             Optional<String> packageNameOpt = cu.getPackageDeclaration().map(pd -> pd.getNameAsString());
             String packagePath = packageNameOpt.map(pkg -> pkg.replace(".", "/")).orElse("");
-            Path targetDirectory = Paths.get("IceBox", packagePath);
+            Path targetDirectory = Paths.get("IceBox", "src/main/java", packagePath);
             Files.createDirectories(targetDirectory);
 
             Optional<ClassOrInterfaceDeclaration> sourceClassOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
@@ -171,7 +174,7 @@ public class MethodExtractorV1 {
 
             // Gera o pom.xml no IceBox com as dependências necessárias
             pomGenerator.generatePomInIceBox(imports);
-            
+
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -185,17 +188,19 @@ public class MethodExtractorV1 {
      */
     private Set<String> collectImportsFromExtractedClasses(Path iceBoxPath) throws IOException {
         Set<String> imports = new HashSet<>();
-        JavaParser javaParser = new JavaParser(); // Cria uma instância de JavaParser
+        JavaParser javaParser = new JavaParser();
 
+        // Busca em toda a estrutura do IceBox, incluindo src/main/java
         Files.walk(iceBoxPath)
                 .filter(path -> path.toString().endsWith(".java"))
                 .forEach(path -> {
                     try {
                         String content = Files.readString(path);
-                        // Usa a instância de JavaParser para chamar o método parse
                         ParseResult<CompilationUnit> parseResult = javaParser.parse(content);
-                        CompilationUnit cu = parseResult.getResult().orElseThrow();
-                        cu.getImports().forEach(importDecl -> imports.add(importDecl.getNameAsString()));
+                        if (parseResult.getResult().isPresent()) {
+                            CompilationUnit cu = parseResult.getResult().get();
+                            cu.getImports().forEach(importDecl -> imports.add(importDecl.getNameAsString()));
+                        }
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
@@ -273,7 +278,7 @@ public class MethodExtractorV1 {
         }
 
         // Cria o diretório de destino no IceBox com a estrutura de pacotes original
-        Path methodTargetDirectory = Paths.get("IceBox", packagePath.replace(".", "/"));
+        Path methodTargetDirectory = Paths.get("IceBox", "src/main/java", packagePath.replace(".", "/"));
         Files.createDirectories(methodTargetDirectory);
 
         // Define o caminho do arquivo da classe (sem criar subdiretórios adicionais)
@@ -620,17 +625,19 @@ public class MethodExtractorV1 {
             return;
         }
 
-        // Cria o diretório de destino no IceBox com a estrutura de pacotes original
-        Path targetDirectory = Paths.get("IceBox", packagePath).getParent();
-        if (targetDirectory == null) {
-            System.out
-                    .println("Não foi possível determinar o diretório de destino para a classe: " + sanitizedClassName);
-            return;
+        // CORREÇÃO: Usar estrutura Maven padrão - src/main/java
+        String packageName = importPath.get();
+        int lastDotIndex = packageName.lastIndexOf('.');
+        if (lastDotIndex != -1) {
+            packageName = packageName.substring(0, lastDotIndex);
         }
+
+        // Cria o diretório de destino no IceBox com a estrutura Maven padrão
+        Path targetDirectory = Paths.get("IceBox", "src/main/java", packageName.replace(".", "/"));
         Files.createDirectories(targetDirectory);
 
         // Salva a classe no diretório correto
-        Path targetClassFilePath = Paths.get("IceBox", packagePath + ".java");
+        Path targetClassFilePath = targetDirectory.resolve(sanitizedClassName + ".java");
         JavaParser javaParser = new JavaParser();
         ParseResult<CompilationUnit> parseResult = javaParser.parse(classFilePath);
 
@@ -641,7 +648,11 @@ public class MethodExtractorV1 {
             if (classOpt.isPresent()) {
                 ClassOrInterfaceDeclaration originalClass = classOpt.get();
                 CompilationUnit newCU = new CompilationUnit();
-                classCU.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
+
+                // Define o pacote correto
+                newCU.setPackageDeclaration(packageName);
+
+                // Copia os imports da classe original
                 classCU.getImports().forEach(newCU::addImport);
 
                 // Cria uma nova classe com o mesmo nome, extends, implements e anotações
@@ -668,7 +679,7 @@ public class MethodExtractorV1 {
                     field.getAnnotations().forEach(newField::addAnnotation);
 
                     // Copia os modificadores do campo
-                    newField.setModifiers(field.getModifiers()); // Usa setModifiers
+                    newField.setModifiers(field.getModifiers());
 
                     // Copia as variáveis do campo
                     field.getVariables().forEach(variable -> newField.addVariable(variable.clone()));
@@ -685,7 +696,7 @@ public class MethodExtractorV1 {
                     method.getAnnotations().forEach(newMethod::addAnnotation);
 
                     // Copia os modificadores do método
-                    newMethod.setModifiers(method.getModifiers()); // Usa setModifiers
+                    newMethod.setModifiers(method.getModifiers());
 
                     // Adiciona o método à nova classe
                     newClass.addMember(newMethod);
@@ -735,14 +746,14 @@ public class MethodExtractorV1 {
         return requiredFields;
     }
 
-/**
- * Extracts the call path that leads to the specified method
- * 
- * @param sourceFilePath Path to the source file containing the method
- * @param methodName Name of the method to trace callers for
- * @param outputDir Directory where extracted call path should be saved
- */
-public void extractCallPath(String sourceFilePath, String methodName, Path outputDir) {
+    /**
+     * Extracts the call path that leads to the specified method
+     * 
+     * @param sourceFilePath Path to the source file containing the method
+     * @param methodName     Name of the method to trace callers for
+     * @param outputDir      Directory where extracted call path should be saved
+     */
+ public void extractCallPath(String sourceFilePath, String methodName, Path outputDir) {
     try {
         // Parse the source file to find the target class
         File source = new File(sourceFilePath);
@@ -763,12 +774,16 @@ public void extractCallPath(String sourceFilePath, String methodName, Path outpu
         
         String className = classOpt.get().getNameAsString();
         
+        // CORREÇÃO: Usar o diretório base do IceBox
+        Path iceBoxDir = Paths.get("IceBox");
+        Files.createDirectories(iceBoxDir);
 
         VeinFinder extractor = new VeinFinder(sourceRoot.toString());
-        extractor.extractFullCallPath(methodName, className, outputDir);
-        System.out.println("Call path extracted to: " + outputDir);
+        
+        // CORREÇÃO: Usar o método que aceita sourceFilePath
+        extractor.extractFullCallPath(methodName, className, sourceFilePath, iceBoxDir);
+        System.out.println("Call path extracted to: " + iceBoxDir);
     } catch (IOException e) {
         e.printStackTrace();
     }
-}
-}
+}}

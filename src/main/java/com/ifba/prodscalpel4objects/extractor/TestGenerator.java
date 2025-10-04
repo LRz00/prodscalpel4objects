@@ -36,7 +36,7 @@ public class TestGenerator {
     }
 
     private void generateTests(String methodName, String sourceFilepath) throws IOException {
-        Path testsDir = iceBoxPath.resolve("tests");
+        Path testsDir = iceBoxPath.resolve("src/test/java");
         Files.createDirectories(testsDir);
 
         // Primeiro, encontre a classe que contém o método

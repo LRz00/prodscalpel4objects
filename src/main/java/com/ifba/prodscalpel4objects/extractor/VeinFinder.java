@@ -125,12 +125,14 @@ public class VeinFinder {
                         .anyMatch(v -> fieldNames.contains(v.getNameAsString())))
                 .forEach(newClass::addMember);
 
-        // 7. Save the file
+        // 7. Save the file - CORREÇÃO: usar estrutura Maven padrão
         String packagePath = originalCU.getPackageDeclaration()
                 .map(p -> p.getNameAsString().replace(".", "/"))
                 .orElse("");
 
-        Path outputPath = outputDir.resolve(Paths.get(packagePath, callerClass.getNameAsString() + ".java"));
+        // CORREÇÃO: Criar estrutura src/main/java dentro do outputDir
+        Path mavenOutputPath = outputDir.resolve("src/main/java");
+        Path outputPath = mavenOutputPath.resolve(Paths.get(packagePath, callerClass.getNameAsString() + ".java"));
         Files.createDirectories(outputPath.getParent());
 
         if (!Files.exists(outputPath)) {
@@ -146,11 +148,16 @@ public class VeinFinder {
                 .findFirst();
 
         if (targetClassPath.isPresent()) {
-            // Copiar o arquivo inteiro para o diretório de saída
-            Path outputPath = outputDir.resolve(sourceRoot.relativize(targetClassPath.get()));
+            // CORREÇÃO: Usar estrutura Maven padrão
+            Path mavenOutputPath = outputDir.resolve("src/main/java");
+            
+            // Copiar o arquivo inteiro para o diretório de saída mantendo a estrutura de pacotes
+            Path outputPath = mavenOutputPath.resolve(sourceRoot.relativize(targetClassPath.get()));
             Files.createDirectories(outputPath.getParent());
+            
             if (!Files.exists(outputPath)) {
                 Files.copy(targetClassPath.get(), outputPath);
+                System.out.println("Target class saved: " + outputPath);
             } else {
                 System.out.println("Arquivo já existe: " + outputPath + " - pulando cópia.");
             }
@@ -186,4 +193,24 @@ public class VeinFinder {
         }
     }
 
+    // CORREÇÃO: Método adicional para garantir compatibilidade com MethodExtractorV1
+    public void extractFullCallPath(String targetMethodName, String targetClassName, String sourceFilePath, Path outputDir)
+            throws IOException {
+        // Primeiro extrai a classe alvo baseada no sourceFilePath
+        Path sourcePath = Paths.get(sourceFilePath);
+        if (Files.exists(sourcePath)) {
+            Path mavenOutputPath = outputDir.resolve("src/main/java");
+            Files.createDirectories(mavenOutputPath);
+            
+            // Copia o arquivo fonte para a estrutura Maven
+            Path outputPath = mavenOutputPath.resolve(sourcePath.getFileName());
+            if (!Files.exists(outputPath)) {
+                Files.copy(sourcePath, outputPath);
+                System.out.println("Source class saved: " + outputPath);
+            }
+        }
+        
+        // Depois extrai o call path normalmente
+        extractFullCallPath(targetMethodName, targetClassName, outputDir);
+    }
 }
