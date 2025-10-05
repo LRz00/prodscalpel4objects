@@ -103,8 +103,14 @@ public class VeinFinder {
         originalCU.getImports().forEach(newCU::addImport);
 
         // 4. Create simplified version of caller class
-        ClassOrInterfaceDeclaration newClass = newCU.addClass(callerClass.getNameAsString());
-
+        ClassOrInterfaceDeclaration newClass;
+        if (callerClass.isInterface()) {
+            newClass = newCU.addInterface(callerClass.getNameAsString());
+        } else {
+            newClass = newCU.addClass(callerClass.getNameAsString());
+        }
+        
+        newClass.setModifiers(callerClass.getModifiers());
         // Copy class annotations (especially important for Spring controllers)
         callerClass.getAnnotations().forEach(newClass::addAnnotation);
 
@@ -150,11 +156,12 @@ public class VeinFinder {
         if (targetClassPath.isPresent()) {
             // CORREÇÃO: Usar estrutura Maven padrão
             Path mavenOutputPath = outputDir.resolve("src/main/java");
-            
-            // Copiar o arquivo inteiro para o diretório de saída mantendo a estrutura de pacotes
+
+            // Copiar o arquivo inteiro para o diretório de saída mantendo a estrutura de
+            // pacotes
             Path outputPath = mavenOutputPath.resolve(sourceRoot.relativize(targetClassPath.get()));
             Files.createDirectories(outputPath.getParent());
-            
+
             if (!Files.exists(outputPath)) {
                 Files.copy(targetClassPath.get(), outputPath);
                 System.out.println("Target class saved: " + outputPath);
@@ -193,15 +200,17 @@ public class VeinFinder {
         }
     }
 
-    // CORREÇÃO: Método adicional para garantir compatibilidade com MethodExtractorV1
-    public void extractFullCallPath(String targetMethodName, String targetClassName, String sourceFilePath, Path outputDir)
+    // CORREÇÃO: Método adicional para garantir compatibilidade com
+    // MethodExtractorV1
+    public void extractFullCallPath(String targetMethodName, String targetClassName, String sourceFilePath,
+            Path outputDir)
             throws IOException {
         // Primeiro extrai a classe alvo baseada no sourceFilePath
         Path sourcePath = Paths.get(sourceFilePath);
         if (Files.exists(sourcePath)) {
             Path mavenOutputPath = outputDir.resolve("src/main/java");
             Files.createDirectories(mavenOutputPath);
-            
+
             // Copia o arquivo fonte para a estrutura Maven
             Path outputPath = mavenOutputPath.resolve(sourcePath.getFileName());
             if (!Files.exists(outputPath)) {
@@ -209,7 +218,7 @@ public class VeinFinder {
                 System.out.println("Source class saved: " + outputPath);
             }
         }
-        
+
         // Depois extrai o call path normalmente
         extractFullCallPath(targetMethodName, targetClassName, outputDir);
     }

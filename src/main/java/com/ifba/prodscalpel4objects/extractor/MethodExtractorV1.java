@@ -23,6 +23,9 @@ import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
+import com.github.javaparser.ast.body.RecordDeclaration;
+import com.github.javaparser.ast.body.EnumDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
 
 /**
  * Classe responsável por extrair um método e suas dependências para um novo
@@ -70,12 +73,23 @@ public class MethodExtractorV1 {
             Path targetDirectory = Paths.get("IceBox", "src/main/java", packagePath);
             Files.createDirectories(targetDirectory);
 
-            Optional<ClassOrInterfaceDeclaration> sourceClassOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
-            if (sourceClassOpt.isEmpty()) {
+            // CORREÇÃO: Buscar por qualquer TypeDeclaration, não apenas
+            // ClassOrInterfaceDeclaration
+            Optional<TypeDeclaration> sourceTypeOpt = cu.findFirst(TypeDeclaration.class);
+            if (sourceTypeOpt.isEmpty()) {
                 System.out.println("Classe fonte não encontrada.");
                 return;
             }
-            ClassOrInterfaceDeclaration sourceClass = sourceClassOpt.get();
+            TypeDeclaration<?> sourceType = sourceTypeOpt.get();
+
+            // CORREÇÃO: Verificar se é uma classe ou interface antes de buscar métodos
+            if (!(sourceType instanceof ClassOrInterfaceDeclaration)) {
+                System.out.println(
+                        "Tipo não suportado para extração de métodos: " + sourceType.getClass().getSimpleName());
+                return;
+            }
+
+            ClassOrInterfaceDeclaration sourceClass = (ClassOrInterfaceDeclaration) sourceType;
 
             MethodDeclaration method = sourceClass.findFirst(MethodDeclaration.class,
                     m -> m.getNameAsString().equals(methodToBeExtracted)).orElse(null);
@@ -116,7 +130,6 @@ public class MethodExtractorV1 {
 
             // Salva classes dependentes
             Set<String> requiredClasses = findRequiredClasses(method, sourceClass, cu);
-            // No método extract, substitua a chamada para saveClass:
             for (String className : requiredClasses) {
                 // Verifica se a classe atual é a classe fonte
                 if (className.equals(sourceClass.getNameAsString())) {
@@ -138,6 +151,7 @@ public class MethodExtractorV1 {
                                 ParseResult<CompilationUnit> parseResult = exJavaParser.parse(classFilePath);
                                 if (parseResult.getResult().isPresent()) {
                                     CompilationUnit classCU = parseResult.getResult().get();
+                                    // CORREÇÃO: Buscar por ClassOrInterfaceDeclaration específico
                                     Optional<ClassOrInterfaceDeclaration> classOpt = classCU
                                             .findFirst(ClassOrInterfaceDeclaration.class);
 
@@ -229,14 +243,26 @@ public class MethodExtractorV1 {
         cu.getPackageDeclaration().ifPresent(newCU::setPackageDeclaration);
         cu.getImports().forEach(newCU::addImport);
 
-        // Cria uma nova classe com o mesmo nome
-        ClassOrInterfaceDeclaration newClass = newCU.addClass(cls.getNameAsString());
+        // CORREÇÃO: Manter como ClassOrInterfaceDeclaration para compatibilidade
+        ClassOrInterfaceDeclaration newClass = createClassOrInterfaceDeclaration(cls, newCU);
 
         // Copia as anotações da classe original
         cls.getAnnotations().forEach(newClass::addAnnotation);
 
-        // Copia os campos necessários
-        requiredFields.forEach(newClass::addMember);
+        // Copia extends (para classes e interfaces)
+        if (cls.getExtendedTypes().isNonEmpty()) {
+            cls.getExtendedTypes().forEach(newClass::addExtendedType);
+        }
+
+        // Copia implements (apenas para classes)
+        if (!cls.isInterface() && cls.getImplementedTypes().isNonEmpty()) {
+            cls.getImplementedTypes().forEach(newClass::addImplementedType);
+        }
+
+        // Copia os campos necessários (apenas se não for interface)
+        if (!cls.isInterface()) {
+            requiredFields.forEach(newClass::addMember);
+        }
 
         // Copia o método principal
         newClass.addMember(mainMethod.clone());
@@ -250,7 +276,8 @@ public class MethodExtractorV1 {
         String classFileName = cls.getNameAsString() + ".java";
         Path classFilePath = targetDirectory.resolve(classFileName);
         Files.writeString(classFilePath, newCU.toString());
-        System.out.println("Classe salva em: " + classFilePath);
+        System.out.println(
+                "Classe salva em: " + classFilePath + " (Tipo: " + (cls.isInterface() ? "Interface" : "Class") + ")");
     }
 
     /**
@@ -274,14 +301,14 @@ public class MethodExtractorV1 {
         String packagePath = importPath.get();
         int lastDotIndex = packagePath.lastIndexOf('.');
         if (lastDotIndex != -1) {
-            packagePath = packagePath.substring(0, lastDotIndex); // Corta até o último ponto
+            packagePath = packagePath.substring(0, lastDotIndex);
         }
 
         // Cria o diretório de destino no IceBox com a estrutura de pacotes original
         Path methodTargetDirectory = Paths.get("IceBox", "src/main/java", packagePath.replace(".", "/"));
         Files.createDirectories(methodTargetDirectory);
 
-        // Define o caminho do arquivo da classe (sem criar subdiretórios adicionais)
+        // Define o caminho do arquivo da classe
         Path classFilePath = methodTargetDirectory.resolve(parentClass.getNameAsString() + ".java");
 
         CompilationUnit methodCU;
@@ -301,16 +328,16 @@ public class MethodExtractorV1 {
                 if (existingClassOpt.isPresent()) {
                     newClass = existingClassOpt.get();
                 } else {
-                    newClass = methodCU.addClass(parentClass.getNameAsString());
+                    newClass = createClassOrInterfaceDeclaration(parentClass, methodCU);
                 }
             } else {
-                return; // Erro ao carregar o arquivo existente
+                return;
             }
         } else {
             // Cria um novo arquivo se ele não existir
             methodCU = new CompilationUnit();
-            methodCU.setPackageDeclaration(packagePath); // Usa o packagePath sem o nome da classe
-            newClass = methodCU.addClass(parentClass.getNameAsString());
+            methodCU.setPackageDeclaration(packagePath);
+            newClass = createClassOrInterfaceDeclaration(parentClass, methodCU);
         }
 
         // Adiciona os imports necessários
@@ -321,10 +348,10 @@ public class MethodExtractorV1 {
                 .anyMatch(m -> m.getNameAsString().equals(method.getNameAsString()));
 
         if (!methodExists) {
-            // Adiciona o método ao arquivo
             newClass.addMember(method.clone());
             Files.writeString(classFilePath, methodCU.toString());
-            System.out.println("Método salvo em: " + classFilePath);
+            System.out.println("Método salvo em: " + classFilePath + " (Tipo: "
+                    + (parentClass.isInterface() ? "Interface" : "Class") + ")");
         }
     }
 
@@ -352,11 +379,9 @@ public class MethodExtractorV1 {
 
         // Verifica importações com *
         Optional<String> wildcardImport = sourceCU.getImports().stream()
-                .filter(importDecl -> importDecl.isAsterisk()) // Verifica se é uma importação com *
-                .map(importDecl -> importDecl.getName().toString() + "." + sanitizedClassName) // Constrói o caminho
-                                                                                               // completo
+                .filter(importDecl -> importDecl.isAsterisk())
+                .map(importDecl -> importDecl.getName().toString() + "." + sanitizedClassName)
                 .filter(importedClass -> {
-                    // Verifica se o arquivo da classe existe no pacote
                     Path classFilePath = sourceRoot.resolve(importedClass.replace(".", "/") + ".java");
                     return Files.exists(classFilePath);
                 })
@@ -655,8 +680,8 @@ public class MethodExtractorV1 {
                 // Copia os imports da classe original
                 classCU.getImports().forEach(newCU::addImport);
 
-                // Cria uma nova classe com o mesmo nome, extends, implements e anotações
-                ClassOrInterfaceDeclaration newClass = newCU.addClass(originalClass.getNameAsString());
+                // CORREÇÃO: Usar createClassOrInterfaceDeclaration
+                ClassOrInterfaceDeclaration newClass = createClassOrInterfaceDeclaration(originalClass, newCU);
 
                 // Copia as anotações da classe original
                 originalClass.getAnnotations().forEach(newClass::addAnnotation);
@@ -666,27 +691,29 @@ public class MethodExtractorV1 {
                     originalClass.getExtendedTypes().forEach(newClass::addExtendedType);
                 }
 
-                // Copia implements
-                if (originalClass.getImplementedTypes().isNonEmpty()) {
+                // Copia implements (apenas para classes)
+                if (!originalClass.isInterface() && originalClass.getImplementedTypes().isNonEmpty()) {
                     originalClass.getImplementedTypes().forEach(newClass::addImplementedType);
                 }
 
-                // Copia todos os campos da classe original, incluindo anotações e modificadores
-                originalClass.getFields().forEach(field -> {
-                    FieldDeclaration newField = new FieldDeclaration();
+                // Copia todos os campos da classe original (apenas se não for interface)
+                if (!originalClass.isInterface()) {
+                    originalClass.getFields().forEach(field -> {
+                        FieldDeclaration newField = new FieldDeclaration();
 
-                    // Copia as anotações do campo
-                    field.getAnnotations().forEach(newField::addAnnotation);
+                        // Copia as anotações do campo
+                        field.getAnnotations().forEach(newField::addAnnotation);
 
-                    // Copia os modificadores do campo
-                    newField.setModifiers(field.getModifiers());
+                        // Copia os modificadores do campo
+                        newField.setModifiers(field.getModifiers());
 
-                    // Copia as variáveis do campo
-                    field.getVariables().forEach(variable -> newField.addVariable(variable.clone()));
+                        // Copia as variáveis do campo
+                        field.getVariables().forEach(variable -> newField.addVariable(variable.clone()));
 
-                    // Adiciona o campo à nova classe
-                    newClass.addMember(newField);
-                });
+                        // Adiciona o campo à nova classe
+                        newClass.addMember(newField);
+                    });
+                }
 
                 // Copia os métodos dependentes, incluindo anotações e modificadores
                 for (MethodDeclaration method : dependentMethods) {
@@ -704,7 +731,8 @@ public class MethodExtractorV1 {
 
                 // Salva a nova CompilationUnit no diretório de destino
                 Files.writeString(targetClassFilePath, newCU.toString());
-                System.out.println("Classe salva em: " + targetClassFilePath);
+                System.out.println("Classe salva em: " + targetClassFilePath + " (Tipo: "
+                        + (originalClass.isInterface() ? "Interface" : "Class") + ")");
             }
         }
     }
@@ -753,37 +781,117 @@ public class MethodExtractorV1 {
      * @param methodName     Name of the method to trace callers for
      * @param outputDir      Directory where extracted call path should be saved
      */
- public void extractCallPath(String sourceFilePath, String methodName, Path outputDir) {
-    try {
-        // Parse the source file to find the target class
-        File source = new File(sourceFilePath);
-        ParseResult<CompilationUnit> parseResult = new JavaParser().parse(source);
-        
-        if (parseResult.getResult().isEmpty()) {
-            System.out.println("Failed to parse source file: " + sourceFilePath);
-            return;
-        }
-        
-        CompilationUnit cu = parseResult.getResult().get();
-        Optional<ClassOrInterfaceDeclaration> classOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
-        
-        if (classOpt.isEmpty()) {
-            System.out.println("No class found in source file: " + sourceFilePath);
-            return;
-        }
-        
-        String className = classOpt.get().getNameAsString();
-        
-        // CORREÇÃO: Usar o diretório base do IceBox
-        Path iceBoxDir = Paths.get("IceBox");
-        Files.createDirectories(iceBoxDir);
+    public void extractCallPath(String sourceFilePath, String methodName, Path outputDir) {
+        try {
+            // Parse the source file to find the target class
+            File source = new File(sourceFilePath);
+            ParseResult<CompilationUnit> parseResult = new JavaParser().parse(source);
 
-        VeinFinder extractor = new VeinFinder(sourceRoot.toString());
-        
-        // CORREÇÃO: Usar o método que aceita sourceFilePath
-        extractor.extractFullCallPath(methodName, className, sourceFilePath, iceBoxDir);
-        System.out.println("Call path extracted to: " + iceBoxDir);
-    } catch (IOException e) {
-        e.printStackTrace();
+            if (parseResult.getResult().isEmpty()) {
+                System.out.println("Failed to parse source file: " + sourceFilePath);
+                return;
+            }
+
+            CompilationUnit cu = parseResult.getResult().get();
+            Optional<ClassOrInterfaceDeclaration> classOpt = cu.findFirst(ClassOrInterfaceDeclaration.class);
+
+            if (classOpt.isEmpty()) {
+                System.out.println("No class found in source file: " + sourceFilePath);
+                return;
+            }
+
+            String className = classOpt.get().getNameAsString();
+
+            // CORREÇÃO: Usar o diretório base do IceBox
+            Path iceBoxDir = Paths.get("IceBox");
+            Files.createDirectories(iceBoxDir);
+
+            VeinFinder extractor = new VeinFinder(sourceRoot.toString());
+
+            // CORREÇÃO: Usar o método que aceita sourceFilePath
+            extractor.extractFullCallPath(methodName, className, sourceFilePath, iceBoxDir);
+            System.out.println("Call path extracted to: " + iceBoxDir);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
-}}
+
+    /**
+     * Cria a declaração correta baseada no tipo original da classe
+     */
+    /**
+     * Cria a declaração correta baseada no tipo original da classe/record/enum
+     */
+    private ClassOrInterfaceDeclaration createClassOrInterfaceDeclaration(ClassOrInterfaceDeclaration originalClass,
+            CompilationUnit newCU) {
+        ClassOrInterfaceDeclaration newDeclaration;
+
+        if (originalClass.isInterface()) {
+            newDeclaration = newCU.addInterface(originalClass.getNameAsString());
+        } else {
+            newDeclaration = newCU.addClass(originalClass.getNameAsString());
+        }
+
+        // Copia modificadores (public, abstract, final, etc)
+        newDeclaration.setModifiers(originalClass.getModifiers());
+
+        // Copia type parameters (generics)
+        if (originalClass.getTypeParameters().isNonEmpty()) {
+            originalClass.getTypeParameters().forEach(newDeclaration::addTypeParameter);
+        }
+
+        return newDeclaration;
+    }
+
+    /**
+     * CORREÇÃO: Método para criar TypeDeclaration genérico (para uso futuro)
+     */
+    private TypeDeclaration<?> createCorrectDeclaration(TypeDeclaration<?> originalDeclaration, CompilationUnit newCU) {
+        if (originalDeclaration instanceof RecordDeclaration) {
+            RecordDeclaration originalRecord = (RecordDeclaration) originalDeclaration;
+
+            // Para Records, criamos uma classe regular como fallback
+            ClassOrInterfaceDeclaration classFallback = newCU.addClass(originalRecord.getNameAsString());
+            classFallback.setModifiers(originalRecord.getModifiers());
+            originalRecord.getAnnotations().forEach(classFallback::addAnnotation);
+
+            // CORREÇÃO: Usar comentário de linha correto
+            classFallback.setLineComment("Originalmente um Record - convertido para Class devido a limitações do parser");
+                    
+            System.out.println("AVISO: Record '" + originalRecord.getNameAsString() + "' convertido para Class");
+
+            return classFallback;
+
+        } else if (originalDeclaration instanceof EnumDeclaration) {
+            EnumDeclaration originalEnum = (EnumDeclaration) originalDeclaration;
+            EnumDeclaration newEnum = newCU.addEnum(originalEnum.getNameAsString());
+            newEnum.setModifiers(originalEnum.getModifiers());
+            originalEnum.getAnnotations().forEach(newEnum::addAnnotation);
+
+            // Copia as constantes do enum
+            originalEnum.getEntries().forEach(newEnum::addEntry);
+
+            return newEnum;
+
+        } else if (originalDeclaration instanceof ClassOrInterfaceDeclaration) {
+            return createClassOrInterfaceDeclaration((ClassOrInterfaceDeclaration) originalDeclaration, newCU);
+        }
+
+        throw new IllegalArgumentException("Tipo de declaração não suportado: " + originalDeclaration.getClass());
+    }
+
+    /**
+     * Obtém o tipo da declaração como string para logging
+     */
+    private String getDeclarationType(TypeDeclaration<?> declaration) {
+        if (declaration instanceof RecordDeclaration) {
+            return "Record";
+        } else if (declaration instanceof EnumDeclaration) {
+            return "Enum";
+        } else if (declaration instanceof ClassOrInterfaceDeclaration) {
+            ClassOrInterfaceDeclaration classDecl = (ClassOrInterfaceDeclaration) declaration;
+            return classDecl.isInterface() ? "Interface" : "Class";
+        }
+        return "Unknown";
+    }
+}
