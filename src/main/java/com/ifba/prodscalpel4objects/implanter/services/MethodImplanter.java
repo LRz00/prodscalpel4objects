@@ -308,45 +308,97 @@ public class MethodImplanter {
 
     /**
      * Orquestra o processo de identificação e adição de dependências nos poms dos receptores.
-     * INCLUI UMA VERIFICAÇÃO PARA IGNORAR O PROCESSO SE A ORIGEM FOR "IceBox".
+     * CORREÇÃO: No modo IceBox, busca o pom.xml diretamente na pasta alvo, evitando subir para o POM do sistema.
      */
     public void implantDependencies() {
+        // 1. Definição do caminho do POM Doador
+        // Se for IceBox, forçamos a busca local. Se for normal, usamos o scanner padrão.
         if (this.hostRootPath != null && this.hostRootPath.contains("IceBox")) {
-            System.out.println("\nAVISO: O projeto hospedeiro é 'IceBox'. A implantação de dependências será ignorada.");
-            return;
+            System.out.println("--- Modo IceBox Detectado ---");
+            // Tenta pegar o pom.xml diretamente na pasta do IceBox informada
+            File iceBoxPom = new File(this.hostRootPath, "pom.xml");
+
+            if (iceBoxPom.exists()) {
+                this.donorPomPath = iceBoxPom.getAbsolutePath();
+                System.out.println("POM do IceBox localizado: " + this.donorPomPath);
+            } else {
+                System.err.println("ERRO: pom.xml não encontrado diretamente na pasta IceBox: " + this.hostRootPath);
+                // Tenta procurar em subpastas IMEDIATAS do IceBox, caso a estrutura seja diferente
+                // Mas evita chamar scanner.findPomPath() para não subir a árvore
+                return;
+            }
+        } else {
+            // Modo Normal: usa a lógica do scanner que procura a pasta 'src' e sobe se necessário
+            this.donorPomPath = scanner.findPomPath(hostRootPath);
         }
-        this.donorPomPath = scanner.findPomPath(hostRootPath);
 
         if (donorPomPath == null || pomPathOfReceptors.isEmpty()) {
-            System.out.println("\nCaminhos do pom.xml não configurados. Pulando implantação de dependências.");
+            System.out.println("\nCaminhos do pom.xml não configurados ou POM do doador não encontrado. Pulando implantação de dependências.");
             return;
         }
 
-        pomManager.analyzeDonorDependencies(new File(donorPomPath));
-
-        System.out.println("\nIniciando a implantação de dependências...");
-        Set<String> allImports = parser.collectImportsFromModifiedFiles(pathOfFileNames);
-        if (allImports.isEmpty()) {
-            System.out.println("Nenhum arquivo foi modificado. Nenhuma dependência a ser processada.");
-            return;
-        }
-
-        Set<Dependency> requiredDependencies = pomManager.findRequiredDependencies(allImports);
+        System.out.println("\nIniciando análise de dependências...");
 
         try {
+            File donorPomFile = new File(donorPomPath);
+            Model donorModel = pomManager.readPom(donorPomFile);
+            Set<Dependency> dependenciesToImplant = new HashSet<>();
+
+            // 2. Lógica de Seleção de Dependências
+            if (this.hostRootPath != null && this.hostRootPath.contains("IceBox")) {
+                System.out.println("Copiando TODAS as dependências do IceBox para os receptores...");
+
+                // No IceBox, pegamos tudo o que está declarado no POM
+                dependenciesToImplant.addAll(donorModel.getDependencies());
+                System.out.println("Total de dependências encontradas no IceBox: " + dependenciesToImplant.size());
+
+            } else {
+                System.out.println("--- Modo Padrão Detectado ---");
+                System.out.println("Analisando imports para filtrar dependências...");
+
+                // Resolve a árvore para mapear pacotes
+                pomManager.analyzeDonorDependencies(donorPomFile);
+
+                // Coleta imports apenas dos arquivos modificados
+                Set<String> allImports = parser.collectImportsFromModifiedFiles(pathOfFileNames);
+
+                if (allImports.isEmpty()) {
+                    System.out.println("Nenhum arquivo modificado requer dependências novas.");
+                    return;
+                }
+
+                // Filtra o que é necessário
+                dependenciesToImplant = pomManager.findRequiredDependencies(allImports);
+            }
+
+            // 3. Injeção nos Receptores (Código Comum)
+            if (dependenciesToImplant.isEmpty()) {
+                System.out.println("Nenhuma dependência listada para implantação.");
+                return;
+            }
+
             for (String receptorPomPath : pomPathOfReceptors) {
-                File receptorPomFile = new File(receptorPomPath);
-                Model receptorModel = pomManager.readPom(receptorPomFile);
-                int count = pomManager.addMissingDependencies(receptorModel, requiredDependencies);
-                if (count > 0) {
-                    pomManager.writePom(receptorPomFile, receptorModel);
-                    System.out.println(count + " nova(s) dependência(s) adicionada(s) a: " + receptorPomPath);
-                } else {
-                    System.out.println("Nenhuma dependência nova necessária para: " + receptorPomPath);
+                try {
+                    File receptorPomFile = new File(receptorPomPath);
+                    Model receptorModel = pomManager.readPom(receptorPomFile);
+
+                    // O pomManager.addMissingDependencies já verifica duplicatas
+                    int count = pomManager.addMissingDependencies(receptorModel, dependenciesToImplant);
+
+                    if (count > 0) {
+                        pomManager.writePom(receptorPomFile, receptorModel);
+                        System.out.println("Sucesso: " + count + " dependência(s) injetada(s) em: " + receptorPomPath);
+                    } else {
+                        System.out.println("Receptor já possui as dependências: " + receptorPomPath);
+                    }
+
+                } catch (Exception e) {
+                    System.err.println("Erro ao processar o pom receptor (" + receptorPomPath + "): " + e.getMessage());
                 }
             }
+
         } catch (IOException | XmlPullParserException e) {
-            System.err.println("Erro ao processar o pom receptor: " + e.getMessage());
+            System.err.println("Erro Crítico ao ler o pom do doador: " + e.getMessage());
         }
     }
 }
