@@ -1,6 +1,7 @@
 package com.ifba.prodscalpel4objects.implanter.services;
 
 import com.github.javaparser.JavaParser;
+import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.NodeList;
@@ -8,6 +9,8 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.stmt.BlockStmt;
+import com.github.javaparser.ast.stmt.Statement;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -203,5 +206,49 @@ public class CodeModifier {
             if (!donorVar.getInitializer().get().toString().equals(receptorVar.getInitializer().get().toString())) return true;
         }
         return false;
+    }
+
+    /**
+     * Injeta uma chamada de método (hook) dentro do corpo de um método alvo no arquivo receptor.
+     * A instrução é inserida no início do bloco do método, logo após a abertura das chaves.
+     * Se o método alvo não for encontrado, uma exceção clara é lançada.
+     *
+     * @param receptorFile        O arquivo .java receptor onde o hook será injetado.
+     * @param hostMethodSignature A assinatura do método alvo (ex: "void realizarCheckout(Pedido pedido)").
+     * @param codeToInject        O código a ser injetado como instrução (ex: "this.calcularFreteTransplantado();").
+     * @throws IOException              Se ocorrer um erro de leitura ou escrita no arquivo.
+     * @throws IllegalArgumentException Se o método alvo não for encontrado no arquivo receptor.
+     */
+    public void injectMethodCallHook(File receptorFile, String hostMethodSignature, String codeToInject) throws IOException {
+        CompilationUnit cu = javaParser.parse(receptorFile).getResult()
+                .orElseThrow(() -> new IOException("Erro ao parsear o receptor: " + receptorFile.getName()));
+
+        // Valida e faz o parse da instrução a ser injetada antes de modificar qualquer coisa
+        Statement statementToInject;
+        try {
+            statementToInject = StaticJavaParser.parseStatement(codeToInject);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                    "O código a ser injetado não é uma instrução Java válida: [" + codeToInject + "]", e);
+        }
+
+        MethodDeclaration targetMethod = cu.findAll(MethodDeclaration.class).stream()
+                .filter(m -> m.getDeclarationAsString(false, false, false).equals(hostMethodSignature))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Método alvo para injeção de hook não encontrado: [" + hostMethodSignature + "] em " + receptorFile.getName()));
+
+        BlockStmt body = targetMethod.getBody()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "O método alvo [" + hostMethodSignature + "] é abstrato ou nativo e não possui corpo para injeção."));
+
+        // Insere a instrução no início do bloco (índice 0)
+        body.getStatements().add(0, statementToInject);
+
+        System.out.println("Hook injetado com sucesso em [" + hostMethodSignature + "] no arquivo " + receptorFile.getName());
+
+        try (FileOutputStream fos = new FileOutputStream(receptorFile)) {
+            fos.write(cu.toString().getBytes());
+        }
     }
 }
