@@ -16,7 +16,7 @@ public class Prodscalpel4objects {
         String sourceRootPath = "C:\\Users\\Lara.rodrigues\\Documents\\prodExemple\\src\\main\\java\\";
 
         // Caminho completo para o arquivo-fonte que contém o método processData
-        String sourceFilePath = "C:\\Users\\Lara.rodrigues\\Documents\\prodExemple\\src\\main\\java\\org\\example\\service\\ServiceClass.java";
+        String sourceFilePath = "C:\\Users\\Lara.rodrigues\\Documents\\prodExemple\\src\\main\\java\\org\\example";
 
         // Nome do método a ser extraído
         String methodName = "processData";
@@ -27,5 +27,6 @@ public class Prodscalpel4objects {
         // Extrai o método especificado para um novo arquivo
         methodExtractor.extract(sourceFilePath, methodName);
 
-        System.out.println("Extração concluída.");    }
+        System.out.println("Extração concluída.");
+    }
 }
