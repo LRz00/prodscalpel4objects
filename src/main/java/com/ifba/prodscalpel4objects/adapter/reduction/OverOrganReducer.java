@@ -2,6 +2,8 @@ package com.ifba.prodscalpel4objects.adapter.reduction;
 
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
 import com.ifba.prodscalpel4objects.adapter.evaluation.DynamicCompiler;
 import com.ifba.prodscalpel4objects.adapter.evaluation.DynamicTestRunner;
 import com.ifba.prodscalpel4objects.adapter.model.ExtractedOrganInfo;
@@ -65,17 +67,40 @@ public class OverOrganReducer {
         String packageName = entryCu.getPackageDeclaration().map(pd -> pd.getNameAsString() + ".").orElse("");
         String entryClassFullName = packageName + organInfo.entryClassName();
 
-        // Carrega classes auxiliares
-        Map<String, String> auxiliarySources = new HashMap<>();
+        // Carrega classes auxiliares (com suporte a fusão de classes fragmentadas pelo Extractor)
+        Map<String, CompilationUnit> auxiliaryCus = new LinkedHashMap<>();
         for (Path file : organInfo.extractedClassFiles()) {
             if (!file.equals(entryFile) && Files.exists(file)) {
                 CompilationUnit auxCu = StaticJavaParser.parse(file);
                 String auxPkg = auxCu.getPackageDeclaration().map(pd -> pd.getNameAsString() + ".").orElse("");
-                String auxClassName = auxCu.findFirst(com.github.javaparser.ast.body.ClassOrInterfaceDeclaration.class)
-                        .map(c -> auxPkg + c.getNameAsString())
-                        .orElse(file.getFileName().toString().replace(".java", ""));
-                auxiliarySources.put(auxClassName, auxCu.toString());
+                Optional<ClassOrInterfaceDeclaration> auxClassOpt = auxCu.findFirst(ClassOrInterfaceDeclaration.class);
+                String auxClassName = auxClassOpt.isPresent()
+                        ? auxPkg + auxClassOpt.get().getNameAsString()
+                        : file.getFileName().toString().replace(".java", "");
+
+                if (auxiliaryCus.containsKey(auxClassName)) {
+                    // Mescla métodos e atributos de classes que foram fragmentadas em arquivos separados
+                    CompilationUnit existingCu = auxiliaryCus.get(auxClassName);
+                    ClassOrInterfaceDeclaration existingClass = existingCu.findFirst(ClassOrInterfaceDeclaration.class).orElse(null);
+                    ClassOrInterfaceDeclaration incomingClass = auxClassOpt.orElse(null);
+                    if (existingClass != null && incomingClass != null) {
+                        for (MethodDeclaration md : incomingClass.getMethods()) {
+                            boolean exists = existingClass.getMethods().stream()
+                                    .anyMatch(m -> m.getNameAsString().equals(md.getNameAsString()));
+                            if (!exists) {
+                                existingClass.addMember(md.clone());
+                            }
+                        }
+                    }
+                } else {
+                    auxiliaryCus.put(auxClassName, auxCu);
+                }
             }
+        }
+
+        Map<String, String> auxiliarySources = new HashMap<>();
+        for (Map.Entry<String, CompilationUnit> entry : auxiliaryCus.entrySet()) {
+            auxiliarySources.put(entry.getKey(), entry.getValue().toString());
         }
 
         // Carrega classes de teste
